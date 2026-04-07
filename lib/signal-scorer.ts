@@ -1,5 +1,6 @@
-import type { MarketRegime } from '@/lib/market-filter';
 import type { StrategyAResult } from '@/lib/strategies/strategy-a';
+
+type MarketRegime = 'bull' | 'bear' | 'neutral';
 import type { StrategyBResult } from '@/lib/strategies/strategy-b';
 import type { StrategyCResult } from '@/lib/strategies/strategy-c';
 import {

@@ -11,8 +11,9 @@ import { evaluateStrategyB } from './strategy-b';
 import { evaluateStrategyC } from './strategy-c';
 import { scoreStrategyA, scoreStrategyB, scoreStrategyC } from '@/lib/signal-scorer';
 import { calcRiskLevels } from '@/lib/risk-levels';
-import type { MarketRegime } from '@/lib/market-filter';
 import type { SignalIndicatorSnapshot, SignalStrategy, SignalGrade } from '@/lib/types/database';
+
+export type MarketRegime = 'bull' | 'bear' | 'neutral';
 import {
   STRATEGY_A_ADX_MIN,
   STRATEGY_C_SL_ATR_MULT, STRATEGY_C_TP_ATR_MULT,
