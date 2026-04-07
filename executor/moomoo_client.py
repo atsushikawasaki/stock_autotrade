@@ -10,6 +10,7 @@ from moomoo import (
     OrderType,
     RET_OK,
     SecurityFirm,
+    Currency,
     TrdEnv,
     TrdMarket,
     TrdSide,
@@ -64,7 +65,7 @@ def get_account_balance() -> float | None:
     """Get available buying power in USD."""
     ctx = _get_trade_ctx()
     try:
-        ret, data = ctx.accinfo_query(trd_env=TrdEnv.REAL)
+        ret, data = ctx.accinfo_query(trd_env=TrdEnv.REAL, currency=Currency.USD)
         if ret == RET_OK:
             power = data.iloc[0].get("power", 0)
             return float(power)

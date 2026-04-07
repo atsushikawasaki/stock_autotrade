@@ -1,13 +1,14 @@
-"""Price data fetcher via moomoo OpenAPI for US stocks."""
+"""Price data fetcher via yfinance for US stocks.
+
+Uses yfinance (free) for OHLCV and current price.
+moomoo OpenAPI is used only for order execution.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 
-from moomoo import OpenQuoteContext, SubType, KLType, RET_OK
-
-from config import OPEND_HOST, OPEND_PORT, MOOMOO_SYMBOL_PREFIX
+import yfinance as yf
 
 
 @dataclass(frozen=True)
@@ -20,70 +21,59 @@ class PriceRow:
     volume: int
 
 
-def _to_code(symbol: str) -> str:
-    if symbol.startswith(MOOMOO_SYMBOL_PREFIX):
-        return symbol
-    return f"{MOOMOO_SYMBOL_PREFIX}{symbol}"
+def _to_ticker(symbol: str) -> str:
+    """Strip moomoo prefix if present: US.AAPL -> AAPL"""
+    if symbol.startswith("US."):
+        return symbol[3:]
+    return symbol
 
 
 def fetch_daily_prices(symbol: str, days: int = 120) -> list[PriceRow]:
-    """Fetch daily OHLCV via moomoo OpenAPI (K-line history)."""
-    code = _to_code(symbol)
-    end = datetime.now()
-    start = end - timedelta(days=int(days * 1.5))
+    """Fetch daily OHLCV via yfinance."""
+    ticker = _to_ticker(symbol)
+    period = f"{max(days, 30)}d"
 
-    ctx = OpenQuoteContext(host=OPEND_HOST, port=OPEND_PORT)
     try:
-        ret, data, _ = ctx.request_history_kline(
-            code,
-            start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
-            ktype=KLType.K_DAY,
-            max_count=days,
-        )
-
-        if ret != RET_OK or data is None or data.empty:
-            print(f"[WARN] No kline data for {symbol}: {data}")
+        df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            print(f"[WARN] No data for {symbol}")
             return []
 
+        # yfinance may return MultiIndex columns for single ticker
+        if hasattr(df.columns, "levels") and len(df.columns.levels) > 1:
+            df = df.droplevel(level=1, axis=1)
+
         rows: list[PriceRow] = []
-        for _, row in data.iterrows():
-            close = row.get("close")
-            if close is None or close != close:
+        for idx, row in df.iterrows():
+            close = row.get("Close")
+            if close is None or close != close:  # NaN check
                 continue
-            # time_key format: "YYYY-MM-DD HH:MM:SS"
-            date_str = str(row.get("time_key", ""))[:10]
+            date_str = str(idx)[:10]
             rows.append(PriceRow(
                 date=date_str,
-                open=float(row.get("open", close)),
-                high=float(row.get("high", close)),
-                low=float(row.get("low", close)),
+                open=float(row.get("Open", close)),
+                high=float(row.get("High", close)),
+                low=float(row.get("Low", close)),
                 close=float(close),
-                volume=int(row.get("volume", 0)),
+                volume=int(row.get("Volume", 0)),
             ))
-
         return rows
-    finally:
-        ctx.close()
+
+    except Exception as e:
+        print(f"[WARN] yfinance error for {symbol}: {e}")
+        return []
 
 
 def fetch_current_price(symbol: str) -> float | None:
-    """Get latest price for a US stock via moomoo quote API."""
-    code = _to_code(symbol)
-    ctx = OpenQuoteContext(host=OPEND_HOST, port=OPEND_PORT)
+    """Get latest price for a US stock via yfinance."""
+    ticker = _to_ticker(symbol)
     try:
-        ret_sub, _ = ctx.subscribe([code], [SubType.QUOTE])
-        if ret_sub != RET_OK:
-            print(f"[WARN] Subscribe failed for {code}")
-            return None
-
-        ret, data = ctx.get_stock_quote([code])
-        if ret == RET_OK and len(data) > 0:
-            price = data.iloc[0].get("last_price", None)
-            return float(price) if price is not None else None
-        return None
+        t = yf.Ticker(ticker)
+        info = t.fast_info
+        price = getattr(info, "last_price", None)
+        if price is None:
+            price = getattr(info, "previous_close", None)
+        return float(price) if price is not None else None
     except Exception as e:
         print(f"[WARN] Quote failed for {symbol}: {e}")
         return None
-    finally:
-        ctx.close()

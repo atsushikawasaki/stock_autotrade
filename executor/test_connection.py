@@ -34,6 +34,7 @@ from moomoo import (
     SecurityFirm,
     SubType,
     KLType,
+    Currency,
     TrdEnv,
     TrdMarket,
     TrdSide,
@@ -61,7 +62,7 @@ def test_account_info() -> bool:
     """Test 1: Fetch account info and buying power (USD)."""
     ctx = _get_trade_ctx()
     try:
-        ret, data = ctx.accinfo_query(trd_env=TrdEnv.REAL)
+        ret, data = ctx.accinfo_query(trd_env=TrdEnv.REAL, currency=Currency.USD)
         if ret == RET_OK:
             power = data.iloc[0].get("power", "N/A")
             total_assets = data.iloc[0].get("total_assets", "N/A")
