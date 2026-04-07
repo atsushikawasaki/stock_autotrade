@@ -1,9 +1,9 @@
-import { supabaseAdmin } from '@/lib/supabase';
+import { getSupabaseAdmin } from '@/lib/supabase';
 import type { Stock } from '@/lib/types/database';
 
 /** Fetch all active US stocks from Supabase */
 export async function getActiveStocks(): Promise<Stock[]> {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('us_stocks')
     .select('*')
     .eq('is_active', true)

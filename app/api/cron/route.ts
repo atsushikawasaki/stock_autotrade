@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { getSupabaseAdmin } from '@/lib/supabase';
 import { getActiveStocks } from '@/lib/stock-universe';
 import { getMarketRegime } from '@/lib/market-filter';
 import { fetchDailyPrices } from '@/lib/yahoo-client';
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
               const shouldNotify = await checkNotifyThrottle(stock.code, sig.strategy);
 
               // Upsert signal to DB
-              const { error } = await supabaseAdmin
+              const { error } = await getSupabaseAdmin()
                 .from('us_signals')
                 .upsert({
                   stock_code: stock.code,
@@ -126,7 +126,7 @@ export async function GET(request: Request) {
 async function checkNotifyThrottle(stockCode: string, strategy: string): Promise<boolean> {
   const cutoff = new Date(Date.now() - MIN_NOTIFY_INTERVAL_HOURS * 60 * 60 * 1000).toISOString();
 
-  const { data } = await supabaseAdmin
+  const { data } = await getSupabaseAdmin()
     .from('us_signals')
     .select('id')
     .eq('stock_code', stockCode)
