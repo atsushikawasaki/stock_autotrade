@@ -20,6 +20,8 @@ from moomoo_client import (
     place_market_sell,
     OrderResult,
 )
+import notifier
+import risk_manager
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
@@ -73,15 +75,15 @@ def execute_signal(signal: dict) -> bool:
     entry_price = float(signal["entry_price"])
     signal_id = signal["id"]
 
-    # Check position limit
-    open_count = count_open_positions()
-    if open_count >= MAX_POSITIONS:
-        print(f"[SKIP] {stock_code}: max positions reached ({open_count}/{MAX_POSITIONS})")
-        sb.table("us_signals").update({"status": "cancelled"}).eq("id", signal_id).execute()
-        return False
-
     # Position sizing
     balance = get_account_balance()
+
+    # Risk checks (position limit, daily loss, sector concentration)
+    risk = risk_manager.check_all(stock_code, balance or 0)
+    if not risk.allowed:
+        print(f"[RISK] {stock_code}: {risk.reason}")
+        sb.table("us_signals").update({"status": "cancelled"}).eq("id", signal_id).execute()
+        return False
     qty = calc_position_size(entry_price, balance)
     if qty <= 0:
         print(f"[SKIP] {stock_code}: insufficient balance (${balance})")
@@ -92,6 +94,7 @@ def execute_signal(signal: dict) -> bool:
     result = place_limit_buy(stock_code, entry_price, qty)
     if not result.success:
         print(f"[FAIL] {stock_code} buy order failed: {result.message}")
+        notifier.notify_order_failed(stock_code, signal.get("strategy", ""), result.message)
         return False
 
     now = datetime.now(timezone.utc).isoformat()
@@ -118,6 +121,9 @@ def execute_signal(signal: dict) -> bool:
     }).execute()
 
     print(f"[BUY] {stock_code} x{qty} @ ${entry_price:.2f} (order: {result.order_id})")
+    notifier.notify_order_executed(
+        stock_code, signal.get("strategy", ""), qty, entry_price, result.order_id or "",
+    )
     return True
 
 
@@ -136,6 +142,7 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
 
     if not result.success:
         print(f"[FAIL] {stock_code} sell failed: {result.message}")
+        notifier.notify_order_failed(stock_code, "exit", result.message)
         return False
 
     now = datetime.now(timezone.utc)
@@ -165,6 +172,8 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
         "holding_days": holding_days,
     }).execute()
 
+    pnl = (exit_price - entry_price) * qty
     emoji = "+" if return_pct >= 0 else ""
     print(f"[SELL] {stock_code} x{qty} @ ${exit_price:.2f} ({exit_reason}) {emoji}{return_pct}%")
+    notifier.notify_exit(stock_code, exit_reason, entry_price, exit_price, qty, pnl)
     return True

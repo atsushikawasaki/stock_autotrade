@@ -19,10 +19,12 @@ Usage:
   python main.py
 """
 
+import logging
 import sys
 import time
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 from supabase import create_client
 
@@ -44,10 +46,48 @@ from price_client import fetch_daily_prices
 from strategies import evaluate_all_strategies
 from market_filter import get_market_regime
 from constants import NOTIFY_GRADES
+import notifier
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 SCAN_INTERVAL_SECONDS = 300  # Signal scan every 5 min during market hours
+HEARTBEAT_INTERVAL_SECONDS = 300  # Health check every 5 min
+
+log = logging.getLogger("executor")
+
+
+def setup_logging() -> None:
+    """Configure logging to stdout + file."""
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / f"executor_{datetime.now().strftime('%Y%m%d')}.log"
+
+    fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(fmt)
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(fmt)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(file_handler)
+    root.addHandler(stream_handler)
+
+
+def write_heartbeat() -> None:
+    """Write a heartbeat record to Supabase for health monitoring."""
+    try:
+        sb.table("us_executor_heartbeat").upsert({
+            "id": "main",
+            "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+            "status": "running",
+        }, on_conflict="id").execute()
+    except Exception as e:
+        log.warning("Heartbeat write failed: %s", e)
 
 
 def is_market_open() -> bool:
@@ -124,6 +164,12 @@ def scan_signals() -> int:
                     f"TP:${sig.take_profit:.2f if sig.take_profit else 0}"
                 )
 
+                if sig.grade in NOTIFY_GRADES:
+                    notifier.notify_signal(
+                        code, sig.strategy, sig.grade, sig.score,
+                        sig.entry_price, sig.stop_loss, sig.take_profit, sig.reason,
+                    )
+
         except Exception as e:
             print(f"  [ERR] {code}: {e}")
 
@@ -175,35 +221,42 @@ def monitor_positions() -> int:
 
 
 def main():
-    print("=" * 60)
-    print("US Stock Auto-Trade Executor (All-in-One)")
-    print(f"  Poll interval: {POLL_INTERVAL_SECONDS}s")
-    print(f"  Scan interval: {SCAN_INTERVAL_SECONDS}s")
-    print(f"  Trade password: {'set' if MOOMOO_TRADE_PWD else 'NOT SET'}")
-    print("=" * 60)
+    setup_logging()
+
+    log.info("=" * 60)
+    log.info("US Stock Auto-Trade Executor (All-in-One)")
+    log.info("  Poll interval: %ds", POLL_INTERVAL_SECONDS)
+    log.info("  Scan interval: %ds", SCAN_INTERVAL_SECONDS)
+    log.info("  Trade password: %s", "set" if MOOMOO_TRADE_PWD else "NOT SET")
+    log.info("=" * 60)
 
     # Unlock trading
     if MOOMOO_TRADE_PWD:
         if not unlock_trade():
-            print("[FATAL] Failed to unlock trading. Exiting.")
+            log.critical("Failed to unlock trading. Exiting.")
             sys.exit(1)
 
     # Show account balance
     balance = get_account_balance()
     if balance is not None:
-        print(f"[INFO] Buying power: ${balance:,.2f}")
+        log.info("Buying power: $%s", f"{balance:,.2f}")
     else:
-        print("[WARN] Could not fetch account balance")
+        log.warning("Could not fetch account balance")
 
-    print("\n[START] Entering main loop...\n")
+    log.info("Entering main loop...")
 
     last_scan = 0.0
+    last_heartbeat = 0.0
 
     while True:
         try:
             now = time.time()
             market_open = is_market_open()
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+            # Heartbeat
+            if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                write_heartbeat()
+                last_heartbeat = now
 
             if market_open:
                 # Signal scan (every SCAN_INTERVAL_SECONDS)
@@ -214,28 +267,28 @@ def main():
                 # Execute pending signals
                 n_exec = process_pending_signals()
                 if n_exec > 0:
-                    print(f"[{ts}] Executed {n_exec} signal(s)")
+                    log.info("Executed %d signal(s)", n_exec)
 
                 # Monitor positions
                 n_exit = monitor_positions()
                 if n_exit > 0:
-                    print(f"[{ts}] Exited {n_exit} position(s)")
+                    log.info("Exited %d position(s)", n_exit)
             else:
                 # Market closed — run one scan after close for end-of-day signals
                 if now - last_scan >= 3600:
                     utc_hour = datetime.now(timezone.utc).hour
                     # Scan once after market close (21:00-22:00 UTC)
                     if 21 <= utc_hour <= 22:
-                        print(f"[{ts}] Post-market scan...")
+                        log.info("Post-market scan...")
                         scan_signals()
                         last_scan = now
 
         except KeyboardInterrupt:
-            print("\n[STOP] Executor stopped by user")
+            log.info("Executor stopped by user")
             break
         except Exception as e:
-            print(f"[ERR] Main loop: {e}")
-            traceback.print_exc()
+            log.error("Main loop error: %s", e, exc_info=True)
+            notifier.notify_error("Main loop", str(e))
 
         time.sleep(POLL_INTERVAL_SECONDS)
 

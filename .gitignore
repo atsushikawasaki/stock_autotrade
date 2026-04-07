@@ -44,5 +44,6 @@ next-env.d.ts
 
 # python
 executor/venv/
+executor/logs/
 __pycache__/
 *.pyc
