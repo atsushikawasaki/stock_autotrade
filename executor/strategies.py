@@ -374,7 +374,7 @@ def evaluate_all_strategies(
     if res_b.triggered:
         bb_mid = bb_middle[last]
         tp_b = round(bb_mid, 2) if bb_mid is not None and bb_mid > entry_price else None
-        sl_b, tp_b_calc = calc_risk_levels(entry_price, atr, tp_override=tp_b, sl_mult=sl_mult)
+        sl_b, tp_b_calc = calc_risk_levels(entry_price, atr, tp_override=tp_b, sl_mult=2.0)
         score, grade = score_strategy_b(res_b, ctx)
         reason = _reason_b(res_b)
         results.append(EvaluatedSignal("strategy_b", True, score, grade, entry_price, sl_b, tp_b_calc, snapshot, reason))

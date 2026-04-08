@@ -30,7 +30,10 @@ from strategies import evaluate_all_strategies
 from market_filter import get_market_regime
 from constants import (
     MAX_HOLDING_DAYS_A, MAX_HOLDING_DAYS_B, MAX_HOLDING_DAYS_C,
+    MIN_TRADE_GRADE,
 )
+
+GRADE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,10 @@ def backtest_stock(
 
         for sig in signals:
             if not sig.triggered:
+                continue
+
+            # Grade filter: skip low-quality signals
+            if GRADE_ORDER.get(sig.grade, 3) > GRADE_ORDER.get(MIN_TRADE_GRADE, 1):
                 continue
 
             # Skip if already in a trade for this strategy
