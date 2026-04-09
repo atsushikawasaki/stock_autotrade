@@ -1,23 +1,26 @@
 """Trading constants — mirrors TypeScript lib/constants.ts."""
 
-# ─── Strategy A (RSI Momentum + MACD + Trend) ────────────────────────────────
-STRATEGY_A_RSI_CROSS_LEVEL = 50
-STRATEGY_A_ADX_MIN = 23
-STRATEGY_A_ADX_MAX = 27
-STRATEGY_A_RSI_CROSS_LOOKBACK = 2
-STRATEGY_A_RSI_MIN_AT_SIGNAL = 55
-STRATEGY_A_MACD_HIST_MAX_RATIO = 0.025
-STRATEGY_A_VOLUME_RATIO_MIN = 1.2
+# ─── Strategy A (N-Day High Breakout — buy momentum breakouts) ────────────────
+STRATEGY_A_ADX_MIN = 20
+STRATEGY_A_BREAKOUT_LOOKBACK = 20      # N-day high breakout period
+STRATEGY_A_RSI_MIN = 50               # momentum (not oversold)
+STRATEGY_A_RSI_MAX = 75               # not extremely overbought
+STRATEGY_A_VOLUME_RATIO_MIN = 1.3     # volume surge on breakout
+STRATEGY_A_SL_ATR_MULT = 2.0          # moderate SL
+STRATEGY_A_TP_ATR_MULT = 4.0          # wide TP — let breakouts run
 
-# ─── Strategy B (BB Lower Touch + Deep Oversold) ─────────────────────────────
+# ─── Strategy B (Deep Oversold Reversal — only in long-term uptrend) ─────────
 STRATEGY_B_RSI_THRESHOLD = 35
-STRATEGY_B_BB_PROXIMITY_PCT = 2
-STRATEGY_B_BB_BANDWIDTH_MAX = 0.13
+STRATEGY_B_BB_PROXIMITY_PCT = 3
+STRATEGY_B_VOLUME_RATIO_MIN = 1.2      # capitulation volume required
+STRATEGY_B_CANDLE_BODY_PCT = 30        # bullish candle body >= 30% of range
+STRATEGY_B_SMA_PERIOD = 100            # long-term trend filter (was 200, too strict)
 
 # ─── Grade Filter (only execute signals at or above this grade) ──────────────
 MIN_TRADE_GRADE = "B"  # Only execute A or B grade signals
 
 # ─── Strategy C (SMA Golden Cross Momentum) ──────────────────────────────────
+STRATEGY_C_ADX_MIN = 20
 STRATEGY_C_GC_LOOKBACK = 1
 STRATEGY_C_RSI_MIN = 50
 STRATEGY_C_RSI_MAX = 65
@@ -28,8 +31,10 @@ STRATEGY_C_TP_ATR_MULT = 3.0
 SL_ATR_MULTIPLIER = 2.5
 TP_ATR_MULTIPLIER = 3.5
 MAX_HOLDING_DAYS_A = 20
-MAX_HOLDING_DAYS_B = 10
-MAX_HOLDING_DAYS_B_BULL = 15
+MAX_HOLDING_DAYS_B = 15
+MAX_HOLDING_DAYS_B_BULL = 20
+STRATEGY_B_SL_ATR_MULT = 2.0          # moderate SL for reversal trades
+STRATEGY_B_TP_ATR_MULT = 3.0          # wide TP — let winners run
 MAX_HOLDING_DAYS_C = 30
 
 TP_ATR_MULTIPLIER_BULL = 3.5

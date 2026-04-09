@@ -22,19 +22,29 @@ def _to_grade(score: int, a_min: int, b_min: int, c_min: int) -> str:
 
 
 def score_strategy_a(result, ctx: dict) -> tuple[int, str]:
-    """Score Strategy A result. Returns (score, grade)."""
+    """Score Strategy A (N-Day High Breakout) result. Returns (score, grade)."""
     if not result.triggered:
         return 0, "D"
 
-    score = 50  # base
+    score = 45  # base
 
-    if result.rsi_cross_days_ago == 1:
-        score += 15
-    elif result.rsi_cross_days_ago == 2:
-        score += 10
+    # Breakout strength: moderate breakouts outperform extreme ones
+    if result.breakout_pct is not None:
+        if 0.5 <= result.breakout_pct <= 2.5:
+            score += 15  # sweet spot — not too early, not overextended
+        elif result.breakout_pct < 0.5:
+            score += 5   # marginal breakout
+        else:
+            score += 8   # overextended — higher risk of reversal
 
-    if result.volume_surge:
-        score += 10
+    # Volume surge: moderate surge is optimal
+    if result.volume_ratio is not None:
+        if 1.3 <= result.volume_ratio <= 2.0:
+            score += 15  # healthy confirmation volume
+        elif result.volume_ratio > 2.0:
+            score += 8   # extreme volume can signal exhaustion
+        else:
+            score += 5
 
     adx = ctx.get("adx")
     if adx is not None and adx >= 25:
@@ -54,41 +64,41 @@ def score_strategy_a(result, ctx: dict) -> tuple[int, str]:
 
 
 def score_strategy_b(result, ctx: dict) -> tuple[int, str]:
-    """Score Strategy B result. Returns (score, grade)."""
+    """Score Strategy B (Deep Oversold Reversal) result. Returns (score, grade)."""
     if not result.triggered:
         return 0, "D"
 
-    score = 55  # base
+    score = 40  # base
 
-    rsi = ctx.get("rsi")
-    if rsi is not None:
-        if rsi <= 25:
+    # RSI depth bonus: deeper oversold = stronger signal
+    if result.rsi is not None:
+        if result.rsi <= 25:
+            score += 25
+        elif result.rsi <= 28:
             score += 20
-        elif rsi <= 30:
+        else:
             score += 15
-        elif rsi <= 35:
-            score += 10
-        elif rsi <= 38:
-            score += 5
 
-    if result.macd_improving:
+    # Strong reversal candle is core — already required for trigger
+    if result.strong_reversal:
+        score += 5
+
+    # Both confirmations present = highest quality
+    if result.volume_spike and result.macd_improving:
+        score += 15
+    elif result.macd_improving:
         score += 10
-
-    vol_ratio = ctx.get("volume_ratio")
-    if vol_ratio is not None:
-        if vol_ratio >= 1.5:
-            score += 10
-        elif vol_ratio < STRATEGY_B_LOW_VOL_THRESHOLD:
-            score += STRATEGY_B_LOW_VOL_PENALTY
+    elif result.volume_spike:
+        score += 8
 
     regime = ctx.get("market_regime", "neutral")
     if regime == "bull":
         score += 5
     elif regime == "bear":
-        score -= 10
+        score -= 15
 
     if ctx.get("stoch_cross_up"):
-        score += 5
+        score += 8
 
     score = max(0, min(100, score))
     return score, _to_grade(score, SCORE_B_GRADE_A_MIN, SCORE_B_GRADE_B_MIN, SCORE_B_GRADE_C_MIN)
