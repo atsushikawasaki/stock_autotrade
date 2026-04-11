@@ -113,3 +113,25 @@ export type SignalOutcome = {
   notes: string | null;
   created_at: string;
 };
+
+export type BacktestResult = {
+  id: string;
+  stock_code: string;
+  strategy: SignalStrategy;
+  total_trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  avg_return_pct: number;
+  total_pnl: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  avg_holding_days: number;
+  backtest_date: string;
+};
+
+export type ExecutorHeartbeat = {
+  id: string;
+  last_heartbeat: string;
+  status: 'running' | 'stopped' | 'error' | string;
+};

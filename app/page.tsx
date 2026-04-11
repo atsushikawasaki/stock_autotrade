@@ -1,65 +1,144 @@
-import Image from "next/image";
+import { DollarSign, Target, Briefcase, Activity } from 'lucide-react';
+import { KpiCard } from '@/components/dashboard/kpi-card';
+import { HealthBadge } from '@/components/dashboard/health-badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
+import { GradeBadge } from '@/components/signals/grade-badge';
+import { StrategyLabel } from '@/components/signals/strategy-label';
+import { StatusBadge } from '@/components/signals/status-badge';
+import { getRecentSignals } from '@/lib/queries/signals';
+import { getOpenPositions } from '@/lib/queries/positions';
+import { getClosedTrades, computeTradeStats } from '@/lib/queries/trades';
+import { getLatestHeartbeat } from '@/lib/queries/health';
+import { formatCurrency, formatDate, formatPct } from '@/lib/utils';
 
-export default function Home() {
+export const dynamic = 'force-dynamic';
+
+export default async function OverviewPage() {
+  const [signals, positions, trades, hb] = await Promise.all([
+    getRecentSignals(5),
+    getOpenPositions(),
+    getClosedTrades(500),
+    getLatestHeartbeat(),
+  ]);
+
+  const stats = computeTradeStats(trades);
+  const pnlTone = stats.totalReturnPct > 0 ? 'positive' : stats.totalReturnPct < 0 ? 'negative' : 'default';
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            自動売買の現在状況とパフォーマンス
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <HealthBadge hb={hb} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard
+          title="累積 P&L"
+          value={formatPct(stats.totalReturnPct)}
+          subtitle={`${stats.total} trades closed`}
+          icon={DollarSign}
+          tone={pnlTone}
+        />
+        <KpiCard
+          title="勝率"
+          value={`${stats.winRate.toFixed(1)}%`}
+          subtitle={`${stats.wins}W / ${stats.losses}L`}
+          icon={Target}
+        />
+        <KpiCard
+          title="オープンポジション"
+          value={String(positions.length)}
+          subtitle="現在保有中"
+          icon={Briefcase}
+        />
+        <KpiCard
+          title="平均リターン"
+          value={formatPct(stats.avgReturnPct)}
+          subtitle="per trade"
+          icon={Activity}
+          tone={stats.avgReturnPct > 0 ? 'positive' : stats.avgReturnPct < 0 ? 'negative' : 'default'}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>最新シグナル</CardTitle>
+          </CardHeader>
+          <CardContent className="px-0 pb-0">
+            {signals.length === 0 ? (
+              <div className="px-5 pb-5 text-sm text-zinc-500">シグナルなし</div>
+            ) : (
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Date</TH>
+                    <TH>Code</TH>
+                    <TH>Strategy</TH>
+                    <TH>Grade</TH>
+                    <TH>Status</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {signals.map((s) => (
+                    <TR key={s.id}>
+                      <TD className="text-zinc-500">{formatDate(s.signal_date)}</TD>
+                      <TD className="font-medium">{s.stock_code}</TD>
+                      <TD><StrategyLabel strategy={s.strategy} /></TD>
+                      <TD><GradeBadge grade={s.grade} /></TD>
+                      <TD><StatusBadge status={s.status} /></TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>オープンポジション</CardTitle>
+          </CardHeader>
+          <CardContent className="px-0 pb-0">
+            {positions.length === 0 ? (
+              <div className="px-5 pb-5 text-sm text-zinc-500">保有なし</div>
+            ) : (
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Opened</TH>
+                    <TH>Code</TH>
+                    <TH className="text-right">Entry</TH>
+                    <TH className="text-right">SL</TH>
+                    <TH className="text-right">TP</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {positions.map((p) => (
+                    <TR key={p.id}>
+                      <TD className="text-zinc-500">{formatDate(p.opened_at)}</TD>
+                      <TD className="font-medium">{p.stock_code}</TD>
+                      <TD className="text-right">{formatCurrency(p.entry_price)}</TD>
+                      <TD className="text-right">
+                        {p.stop_loss != null ? formatCurrency(p.stop_loss) : '—'}
+                      </TD>
+                      <TD className="text-right">
+                        {p.take_profit != null ? formatCurrency(p.take_profit) : '—'}
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
