@@ -1,9 +1,36 @@
 """Configuration for the trade executor."""
 
 import os
+import subprocess
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _read_keychain_secret(service: str) -> str:
+    """
+    Read a secret from macOS Keychain (login keychain of the current user).
+
+    Uses `security find-generic-password -a <user> -s <service> -w`. Returns an
+    empty string on any failure so callers can decide how strict to be.
+    """
+    try:
+        user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+        if not user:
+            return ""
+        result = subprocess.run(
+            ["security", "find-generic-password", "-a", user, "-s", service, "-w"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+
 
 # ─── Supabase ─────────────────────────────────────────────────────────────────
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -12,7 +39,14 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 # ─── moomoo OpenD ─────────────────────────────────────────────────────────────
 OPEND_HOST = os.environ.get("OPEND_HOST", "127.0.0.1")
 OPEND_PORT = int(os.environ.get("OPEND_PORT", "11111"))
-MOOMOO_TRADE_PWD = os.environ.get("MOOMOO_TRADE_PWD", "")
+
+# Trade password: prefer macOS Keychain (service=moomoo_trade_pwd). Falls back
+# to MOOMOO_TRADE_PWD env var for compatibility / non-macOS dev environments.
+# Register via: security add-generic-password -a "$USER" -s "moomoo_trade_pwd" -w
+MOOMOO_TRADE_PWD = (
+    _read_keychain_secret("moomoo_trade_pwd")
+    or os.environ.get("MOOMOO_TRADE_PWD", "")
+)
 
 # ─── Trading Rules ────────────────────────────────────────────────────────────
 # Max % of account value per position
