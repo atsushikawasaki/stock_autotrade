@@ -17,6 +17,9 @@ from indicators import (
 )
 from price_client import PriceRow
 from constants import (
+    STRATEGY_A_ENABLED,
+    STRATEGY_B_ENABLED,
+    STRATEGY_C_ENABLED,
     STRATEGY_A_ADX_MIN,
     STRATEGY_A_BREAKOUT_LOOKBACK,
     STRATEGY_A_RSI_MIN,
@@ -386,7 +389,7 @@ def evaluate_all_strategies(
     trend_strong_c = adx is not None and adx >= STRATEGY_C_ADX_MIN
 
     # Strategy A
-    res_a = evaluate_strategy_a(prices)
+    res_a = evaluate_strategy_a(prices) if STRATEGY_A_ENABLED else StrategyAResult(triggered=False)
     if res_a.triggered and trend_strong_a:
         from constants import STRATEGY_A_SL_ATR_MULT, STRATEGY_A_TP_ATR_MULT
         sl, tp = calc_risk_levels(entry_price, atr, sl_mult=STRATEGY_A_SL_ATR_MULT, tp_mult=STRATEGY_A_TP_ATR_MULT)
@@ -395,7 +398,7 @@ def evaluate_all_strategies(
         results.append(EvaluatedSignal("strategy_a", True, score, grade, entry_price, sl, tp, snapshot, reason))
 
     # Strategy B
-    res_b = evaluate_strategy_b(prices)
+    res_b = evaluate_strategy_b(prices) if STRATEGY_B_ENABLED else StrategyBResult(triggered=False)
     if res_b.triggered:
         from constants import STRATEGY_B_SL_ATR_MULT, STRATEGY_B_TP_ATR_MULT
         sl_b, tp_b_calc = calc_risk_levels(entry_price, atr, sl_mult=STRATEGY_B_SL_ATR_MULT, tp_mult=STRATEGY_B_TP_ATR_MULT)
@@ -404,7 +407,7 @@ def evaluate_all_strategies(
         results.append(EvaluatedSignal("strategy_b", True, score, grade, entry_price, sl_b, tp_b_calc, snapshot, reason))
 
     # Strategy C
-    res_c = evaluate_strategy_c(prices)
+    res_c = evaluate_strategy_c(prices) if STRATEGY_C_ENABLED else StrategyCResult(triggered=False)
     if res_c.triggered and trend_strong_c:
         c_sl_mult = min(STRATEGY_C_SL_ATR_MULT, SL_ATR_MULTIPLIER_BEAR) if market_regime == "bear" else STRATEGY_C_SL_ATR_MULT
         c_tp_mult = max(STRATEGY_C_TP_ATR_MULT, TP_ATR_MULTIPLIER_BULL) if market_regime == "bull" else STRATEGY_C_TP_ATR_MULT
