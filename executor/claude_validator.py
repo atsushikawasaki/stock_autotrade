@@ -1,0 +1,327 @@
+"""Claude AI validation gate for entry signals and exit advice."""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+
+import yfinance as yf
+from anthropic import Anthropic, APIError, APITimeoutError
+
+from config import ANTHROPIC_API_KEY
+from constants import (
+    CLAUDE_MODEL,
+    CLAUDE_MIN_CONFIDENCE,
+    CLAUDE_TIMEOUT_SECONDS,
+    CLAUDE_EARNINGS_BLACKOUT_DAYS,
+)
+
+log = logging.getLogger("claude_validator")
+
+_client: Anthropic | None = None
+
+
+def _get_client() -> Anthropic | None:
+    """Lazy-init Anthropic client. Returns None if no API key."""
+    global _client
+    if _client is not None:
+        return _client
+    if not ANTHROPIC_API_KEY:
+        return None
+    _client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    return _client
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ValidationResult:
+    approved: bool
+    confidence: int  # 0-100
+    reasoning: str
+
+
+@dataclass(frozen=True)
+class ExitAdvice:
+    should_exit: bool
+    reasoning: str
+    suggested_action: str  # "hold", "sell_now", "tighten_sl"
+
+
+# ---------------------------------------------------------------------------
+# Stock context via yfinance
+# ---------------------------------------------------------------------------
+
+def _fetch_stock_context(symbol: str) -> dict:
+    """Fetch recent news headlines, next earnings date, and EPS estimates."""
+    ctx: dict = {
+        "news_headlines": [],
+        "next_earnings_date": None,
+        "earnings_estimate_eps": None,
+        "last_earnings_surprise_pct": None,
+        "days_to_earnings": None,
+    }
+    try:
+        ticker = yf.Ticker(symbol)
+
+        # News (top 3 headlines)
+        news = ticker.get_news()
+        if news:
+            ctx["news_headlines"] = [
+                item.get("title", "") for item in news[:3] if item.get("title")
+            ]
+
+        # Earnings calendar
+        cal = ticker.calendar
+        if cal is not None and isinstance(cal, dict):
+            earnings_date = cal.get("Earnings Date")
+            if earnings_date:
+                # Can be a list of dates
+                if isinstance(earnings_date, list) and len(earnings_date) > 0:
+                    next_date = earnings_date[0]
+                else:
+                    next_date = earnings_date
+                ctx["next_earnings_date"] = str(next_date)
+
+                # Calculate days to earnings
+                from datetime import datetime, timezone
+                import pandas as pd
+                if isinstance(next_date, (datetime, pd.Timestamp)):
+                    now = datetime.now(timezone.utc)
+                    if hasattr(next_date, "tzinfo") and next_date.tzinfo is None:
+                        next_date = next_date.replace(tzinfo=timezone.utc)
+                    delta = (next_date - now).days
+                    ctx["days_to_earnings"] = max(delta, 0)
+
+            eps_est = cal.get("Earnings Average") or cal.get("EPS Estimate")
+            if eps_est is not None:
+                ctx["earnings_estimate_eps"] = float(eps_est)
+
+        # Last earnings surprise
+        hist = ticker.earnings_history
+        if hist is not None and not hist.empty:
+            last_row = hist.iloc[-1]
+            surprise = last_row.get("surprisePercent") or last_row.get("epsActual")
+            if surprise is not None:
+                ctx["last_earnings_surprise_pct"] = round(float(surprise), 2)
+
+    except Exception as e:
+        log.warning("Failed to fetch stock context for %s: %s", symbol, e)
+
+    return ctx
+
+
+# ---------------------------------------------------------------------------
+# Entry validation
+# ---------------------------------------------------------------------------
+
+_ENTRY_SYSTEM_PROMPT = """\
+You are a quantitative trading assistant that validates technical buy signals.
+Your job is to review a signal and decide whether to APPROVE or REJECT it.
+
+Analysis criteria:
+1. Technical consistency: Do indicators align? (e.g., RSI contradicting MACD, \
+false breakout on low volume)
+2. Earnings proximity: If earnings are within {blackout} trading days, \
+recommend caution or rejection.
+3. News sentiment: Check headlines for clearly negative catalysts \
+(lawsuit, downgrade, SEC investigation, guidance cut).
+4. Risk/reward: Is the stop-loss too tight or take-profit unrealistic \
+given the ATR and volatility?
+
+Respond with ONLY a JSON object (no markdown, no explanation outside JSON):
+{{"approved": true/false, "confidence": 0-100, "reasoning": "brief explanation"}}
+""".replace("{blackout}", str(CLAUDE_EARNINGS_BLACKOUT_DAYS))
+
+
+def _build_entry_prompt(signal: dict, context: dict) -> str:
+    """Build user prompt with signal data and stock context."""
+    data = {
+        "stock_code": signal.get("stock_code"),
+        "strategy": signal.get("strategy"),
+        "grade": signal.get("grade"),
+        "score": signal.get("score"),
+        "entry_price": signal.get("entry_price"),
+        "stop_loss": signal.get("stop_loss"),
+        "take_profit": signal.get("take_profit"),
+        "reason": signal.get("reason"),
+        "indicators": signal.get("indicators"),
+    }
+    data.update(context)
+    return json.dumps(data, default=str, ensure_ascii=False)
+
+
+def validate_entry(signal: dict) -> ValidationResult:
+    """
+    Validate a buy signal using Claude AI.
+
+    Fail-open: returns approved=True on any API error so existing logic proceeds.
+    """
+    client = _get_client()
+    if client is None:
+        log.info("[CLAUDE] No API key — skipping entry validation")
+        return ValidationResult(approved=True, confidence=0, reasoning="no_api_key")
+
+    symbol = signal.get("stock_code", "")
+    context = _fetch_stock_context(symbol)
+
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=256,
+            timeout=CLAUDE_TIMEOUT_SECONDS,
+            messages=[
+                {
+                    "role": "user",
+                    "content": _build_entry_prompt(signal, context),
+                }
+            ],
+            system=_ENTRY_SYSTEM_PROMPT,
+        )
+
+        text = response.content[0].text.strip()
+        parsed = json.loads(text)
+
+        approved = bool(parsed.get("approved", False))
+        confidence = int(parsed.get("confidence", 0))
+        reasoning = str(parsed.get("reasoning", ""))
+
+        # Apply minimum confidence threshold
+        if approved and confidence < CLAUDE_MIN_CONFIDENCE:
+            approved = False
+            reasoning = f"Low confidence ({confidence}): {reasoning}"
+
+        log.info(
+            "[CLAUDE] %s %s (confidence:%d): %s",
+            symbol,
+            "approved" if approved else "rejected",
+            confidence,
+            reasoning,
+        )
+        return ValidationResult(
+            approved=approved,
+            confidence=confidence,
+            reasoning=reasoning,
+        )
+
+    except (APIError, APITimeoutError) as e:
+        log.warning("[CLAUDE] API error for %s — fail-open: %s", symbol, e)
+        return ValidationResult(approved=True, confidence=0, reasoning=f"api_error: {e}")
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        log.warning("[CLAUDE] Parse error for %s — fail-open: %s", symbol, e)
+        return ValidationResult(approved=True, confidence=0, reasoning=f"parse_error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Exit advisor
+# ---------------------------------------------------------------------------
+
+_EXIT_SYSTEM_PROMPT = """\
+You are a quantitative trading assistant advising on whether to exit a position.
+You receive position data including entry price, current price, P&L, holding days, \
+and market context.
+
+Decision options:
+- "hold": Maintain position. Momentum intact, no immediate risk.
+- "sell_now": Exit immediately. Approaching earnings, negative news, \
+weakening momentum, or risk/reward no longer favorable.
+- "tighten_sl": Raise stop-loss closer to current price to lock in gains \
+while allowing further upside.
+
+Respond with ONLY a JSON object (no markdown):
+{{"should_exit": true/false, "suggested_action": "hold"|"sell_now"|"tighten_sl", \
+"reasoning": "brief explanation"}}
+"""
+
+
+def _build_exit_prompt(position: dict, current_price: float) -> str:
+    """Build user prompt with position data and context."""
+    entry_price = float(position.get("entry_price", 0))
+    pnl_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+
+    opened_at = position.get("opened_at", "")
+    holding_days = 0
+    if opened_at:
+        from datetime import datetime, timezone
+        try:
+            opened = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+            holding_days = (datetime.now(timezone.utc) - opened).days
+        except (ValueError, TypeError):
+            pass
+
+    signal = position.get("us_signals") or {}
+    symbol = position.get("stock_code", "")
+    context = _fetch_stock_context(symbol)
+
+    data = {
+        "stock_code": symbol,
+        "entry_price": entry_price,
+        "current_price": current_price,
+        "unrealized_pnl_pct": round(pnl_pct, 2),
+        "stop_loss": position.get("stop_loss"),
+        "take_profit": position.get("take_profit"),
+        "holding_days": holding_days,
+        "strategy": signal.get("strategy", "unknown"),
+        "indicators_at_entry": signal.get("indicators"),
+    }
+    data.update(context)
+    return json.dumps(data, default=str, ensure_ascii=False)
+
+
+def advise_exit(position: dict, current_price: float) -> ExitAdvice:
+    """
+    Get Claude's advice on whether to exit a position.
+
+    Fail-open: returns should_exit=False on any API error (defer to existing logic).
+    """
+    client = _get_client()
+    if client is None:
+        return ExitAdvice(should_exit=False, reasoning="no_api_key", suggested_action="hold")
+
+    symbol = position.get("stock_code", "")
+
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=256,
+            timeout=CLAUDE_TIMEOUT_SECONDS,
+            messages=[
+                {
+                    "role": "user",
+                    "content": _build_exit_prompt(position, current_price),
+                }
+            ],
+            system=_EXIT_SYSTEM_PROMPT,
+        )
+
+        text = response.content[0].text.strip()
+        parsed = json.loads(text)
+
+        should_exit = bool(parsed.get("should_exit", False))
+        action = str(parsed.get("suggested_action", "hold"))
+        reasoning = str(parsed.get("reasoning", ""))
+
+        if action not in ("hold", "sell_now", "tighten_sl"):
+            action = "hold"
+
+        log.info(
+            "[CLAUDE-EXIT] %s: %s (%s)",
+            symbol,
+            action,
+            reasoning,
+        )
+        return ExitAdvice(
+            should_exit=should_exit,
+            reasoning=reasoning,
+            suggested_action=action,
+        )
+
+    except (APIError, APITimeoutError) as e:
+        log.warning("[CLAUDE-EXIT] API error for %s — fail-open: %s", symbol, e)
+        return ExitAdvice(should_exit=False, reasoning=f"api_error: {e}", suggested_action="hold")
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        log.warning("[CLAUDE-EXIT] Parse error for %s — fail-open: %s", symbol, e)
+        return ExitAdvice(should_exit=False, reasoning=f"parse_error: {e}", suggested_action="hold")

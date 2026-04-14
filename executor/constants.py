@@ -68,5 +68,14 @@ MARKET_INDEX_SYMBOL = "SPY"
 MARKET_SMA_FAST = 50
 MARKET_SMA_SLOW = 200
 
+# ─── Claude AI ────────────────────────────────────────────────────────────────
+CLAUDE_ENABLED = True              # Entry validation gate
+CLAUDE_EXIT_ENABLED = True         # Exit advisor
+CLAUDE_REVIEW_ENABLED = True       # Daily trade review
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+CLAUDE_MIN_CONFIDENCE = 60         # Minimum confidence to approve entry
+CLAUDE_TIMEOUT_SECONDS = 15
+CLAUDE_EARNINGS_BLACKOUT_DAYS = 5  # Caution zone around earnings
+
 # ─── Notification ─────────────────────────────────────────────────────────────
 NOTIFY_GRADES = ("A", "B", "C")

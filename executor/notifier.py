@@ -120,6 +120,12 @@ def notify_error(context: str, error: str) -> bool:
     return _send(msg)
 
 
+def notify_daily_review(review_text: str) -> bool:
+    """Send Claude AI daily trade review via LINE."""
+    msg = f"\n[AI Daily Review]\n{review_text}"
+    return _send(msg)
+
+
 def notify_daily_summary(
     signals_found: int,
     orders_executed: int,

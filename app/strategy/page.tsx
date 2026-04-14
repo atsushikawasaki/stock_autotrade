@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { KpiCard } from '@/components/dashboard/kpi-card';
 import { StrategyLabel } from '@/components/signals/strategy-label';
+import { BacktestRunner } from '@/components/strategy/backtest-runner';
 import { getBacktestResults } from '@/lib/queries/backtest';
 import { formatPct } from '@/lib/utils';
 import type { BacktestResult, SignalStrategy } from '@/lib/types/database';
@@ -59,6 +59,15 @@ export default async function StrategyPage() {
           バックテスト結果（<code>us_backtest_results</code>）
         </p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Run Backtest</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <BacktestRunner />
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {aggregates.map((a) => (

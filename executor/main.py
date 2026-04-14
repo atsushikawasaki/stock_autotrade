@@ -45,7 +45,8 @@ from position_monitor import get_current_price, determine_exit
 from price_client import fetch_daily_prices
 from strategies import evaluate_all_strategies
 from market_filter import get_market_regime
-from constants import NOTIFY_GRADES
+from constants import NOTIFY_GRADES, CLAUDE_REVIEW_ENABLED
+from daily_reviewer import generate_daily_review
 import notifier
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -289,6 +290,12 @@ def main():
                         log.info("Post-market scan...")
                         scan_signals()
                         last_scan = now
+
+                        # Daily AI review
+                        if CLAUDE_REVIEW_ENABLED:
+                            review = generate_daily_review()
+                            if review:
+                                notifier.notify_daily_review(review)
 
         except KeyboardInterrupt:
             log.info("Executor stopped by user")

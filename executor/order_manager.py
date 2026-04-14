@@ -22,6 +22,8 @@ from moomoo_client import (
 )
 import notifier
 import risk_manager
+from constants import CLAUDE_ENABLED, MIN_TRADE_GRADE
+from claude_validator import validate_entry
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
@@ -69,11 +71,32 @@ def calc_position_size(entry_price: float, balance: float | None) -> int:
     return max(shares, 1) if shares > 0 else 0
 
 
+_GRADE_RANK = {"A": 1, "B": 2, "C": 3, "D": 4}
+
+
 def execute_signal(signal: dict) -> bool:
     """Execute a pending buy signal via moomoo."""
     stock_code = signal["stock_code"]
     entry_price = float(signal["entry_price"])
     signal_id = signal["id"]
+    grade = signal.get("grade", "D")
+
+    # Grade filter — reject signals below MIN_TRADE_GRADE
+    if _GRADE_RANK.get(grade, 99) > _GRADE_RANK.get(MIN_TRADE_GRADE, 1):
+        print(f"[SKIP] {stock_code}: grade {grade} below minimum {MIN_TRADE_GRADE}")
+        sb.table("us_signals").update({"status": "cancelled"}).eq("id", signal_id).execute()
+        return False
+
+    # Claude AI entry validation gate
+    if CLAUDE_ENABLED:
+        result = validate_entry(signal)
+        if not result.approved:
+            print(f"[CLAUDE] {stock_code} rejected: {result.reasoning}")
+            sb.table("us_signals").update({
+                "status": "cancelled",
+                "reason": f"[AI rejected] {result.reasoning}",
+            }).eq("id", signal_id).execute()
+            return False
 
     # Position sizing
     balance = get_account_balance()

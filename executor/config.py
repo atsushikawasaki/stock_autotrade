@@ -56,5 +56,13 @@ MAX_POSITIONS = int(os.environ.get("MAX_POSITIONS", "10"))
 # Symbol prefix for US stocks on moomoo
 MOOMOO_SYMBOL_PREFIX = "US."
 
+# ─── Anthropic (Claude AI) ───────────────────────────────────────────────────
+# Prefer macOS Keychain (service=anthropic_api_key). Falls back to env var.
+# Register via: security add-generic-password -a "$USER" -s "anthropic_api_key" -w
+ANTHROPIC_API_KEY = (
+    _read_keychain_secret("anthropic_api_key")
+    or os.environ.get("ANTHROPIC_API_KEY", "")
+)
+
 # ─── Polling ──────────────────────────────────────────────────────────────────
 POLL_INTERVAL_SECONDS = 60

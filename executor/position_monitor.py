@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from price_client import fetch_current_price
+from constants import CLAUDE_EXIT_ENABLED
+from claude_validator import advise_exit
+
+log = logging.getLogger("position_monitor")
 
 
 def get_current_price(symbol: str) -> float | None:
@@ -50,4 +55,47 @@ def determine_exit(position: dict, current_price: float) -> tuple[str, float] | 
     if check_time_expiry(position, max_days):
         return ("time_expiry", current_price)
 
+    # Claude AI exit advisor (only when no hard exit triggered)
+    if CLAUDE_EXIT_ENABLED:
+        try:
+            advice = advise_exit(position, current_price)
+            if advice.should_exit and advice.suggested_action == "sell_now":
+                log.info(
+                    "[CLAUDE-EXIT] %s: sell_now — %s",
+                    position.get("stock_code"),
+                    advice.reasoning,
+                )
+                return ("claude_exit", current_price)
+            if advice.suggested_action == "tighten_sl":
+                _tighten_stop_loss(position, current_price)
+        except Exception as e:
+            log.warning("Claude exit advisor error: %s", e)
+
     return None
+
+
+def _tighten_stop_loss(position: dict, current_price: float) -> None:
+    """Raise stop-loss to lock in gains (midpoint between entry and current)."""
+    entry_price = float(position.get("entry_price", 0))
+    old_sl = float(position.get("stop_loss") or 0)
+    new_sl = round((entry_price + current_price) / 2, 2)
+
+    if new_sl <= old_sl:
+        return  # Don't lower the stop-loss
+
+    try:
+        from supabase import create_client
+        from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        sb.table("us_positions").update({
+            "stop_loss": new_sl,
+        }).eq("id", position["id"]).execute()
+
+        log.info(
+            "[CLAUDE-EXIT] %s: tightened SL $%.2f -> $%.2f",
+            position.get("stock_code"),
+            old_sl,
+            new_sl,
+        )
+    except Exception as e:
+        log.warning("Failed to tighten SL for %s: %s", position.get("stock_code"), e)

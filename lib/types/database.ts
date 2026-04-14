@@ -29,6 +29,7 @@ export type ExitReason =
   | 'trailing_stop'
   | 'ma_cross'
   | 'time_expiry'
+  | 'claude_exit'
   | 'manual';
 
 export type PositionStatus = 'open' | 'partial_closed' | 'closed';
@@ -134,4 +135,13 @@ export type ExecutorHeartbeat = {
   id: string;
   last_heartbeat: string;
   status: 'running' | 'stopped' | 'error' | string;
+};
+
+export type DailyReview = {
+  id: string;
+  review_date: string;
+  review_text: string;
+  signals_count: number | null;
+  exits_count: number | null;
+  created_at: string;
 };
