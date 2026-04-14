@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { StrategyLabel } from '@/components/signals/strategy-label';
-// import { BacktestRunner } from '@/components/strategy/backtest-runner';
+import { BacktestRunner } from '@/components/strategy/backtest-runner';
 import { getBacktestResults } from '@/lib/queries/backtest';
 import { formatPct } from '@/lib/utils';
 import type { BacktestResult, SignalStrategy } from '@/lib/types/database';
@@ -32,7 +32,7 @@ function aggregate(results: BacktestResult[]): Aggregate[] {
     const totalPnl = rows.reduce((s, r) => s + r.total_pnl, 0);
     const weightedReturn =
       trades === 0 ? 0 : rows.reduce((s, r) => s + r.avg_return_pct * r.total_trades, 0) / trades;
-    const sharpe = rows.length === 0 ? 0 : rows.reduce((s, r) => s + r.sharpe_ratio, 0) / rows.length;
+    const sharpe = rows.length === 0 ? 0 : rows.reduce((s, r) => s + (r.sharpe_ratio ?? 0), 0) / rows.length;
     const maxDD = rows.reduce((m, r) => Math.min(m, r.max_drawdown_pct), 0);
     return {
       strategy,
@@ -59,6 +59,15 @@ export default async function StrategyPage() {
           バックテスト結果（<code>us_backtest_results</code>）
         </p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Run Backtest</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <BacktestRunner />
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {aggregates.map((a) => (
@@ -142,7 +151,7 @@ export default async function StrategyPage() {
                       {formatPct(r.avg_return_pct)}
                     </TD>
                     <TD className="text-right tabular-nums">{r.total_pnl.toFixed(2)}</TD>
-                    <TD className="text-right tabular-nums">{r.sharpe_ratio.toFixed(2)}</TD>
+                    <TD className="text-right tabular-nums">{(r.sharpe_ratio ?? 0).toFixed(2)}</TD>
                     <TD className="text-right tabular-nums text-red-600 dark:text-red-400">
                       {r.max_drawdown_pct.toFixed(1)}%
                     </TD>

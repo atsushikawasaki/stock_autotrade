@@ -126,7 +126,7 @@ export type BacktestResult = {
   avg_return_pct: number;
   total_pnl: number;
   max_drawdown_pct: number;
-  sharpe_ratio: number;
+  sharpe_ratio: number | null;
   avg_holding_days: number;
   backtest_date: string;
 };
