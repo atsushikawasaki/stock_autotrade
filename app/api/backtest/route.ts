@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { spawn } from 'child_process';
-import { join } from 'path';
 
-const BACKTEST_TIMEOUT_MS = 600_000; // 10 min max
+/**
+ * Backtest API — runs executor/backtest.py via child_process.
+ * Only works in local/self-hosted environments (not Vercel serverless).
+ */
 
 interface BacktestParams {
   symbol?: string;
@@ -23,6 +24,21 @@ function parseBody(body: unknown): BacktestParams {
 }
 
 export async function POST(req: Request) {
+  // Dynamic import to avoid bundling child_process in serverless
+  let spawn: typeof import('child_process').spawn;
+  let join: typeof import('path').join;
+  try {
+    const cp = await import('child_process');
+    const path = await import('path');
+    spawn = cp.spawn;
+    join = path.join;
+  } catch {
+    return NextResponse.json(
+      { success: false, error: 'Backtest is only available in local environment (not Vercel)' },
+      { status: 501 },
+    );
+  }
+
   try {
     const raw = (await req.json().catch(() => ({}))) as unknown;
     const params = parseBody(raw);
@@ -40,7 +56,7 @@ export async function POST(req: Request) {
       const chunks: string[] = [];
       const proc = spawn('python3', args, {
         cwd: executorDir,
-        timeout: BACKTEST_TIMEOUT_MS,
+        timeout: 600_000,
         env: { ...process.env },
       });
 
