@@ -231,10 +231,17 @@ def main():
     log.info("=" * 60)
 
     # Unlock trading
+    # Note: moomoo OpenD GUI version has the unlock_trade API disabled — the
+    # user must unlock from the OpenD GUI once per session. Unlock failure is
+    # only a warning here so the daemon keeps running (scans, heartbeat, and
+    # position monitoring all work without trade unlock). Order placement will
+    # fail until the user unlocks from the GUI.
     if MOOMOO_TRADE_PWD:
         if not unlock_trade():
-            log.critical("Failed to unlock trading. Exiting.")
-            sys.exit(1)
+            log.warning(
+                "API unlock failed — please unlock from moomoo OpenD GUI. "
+                "Scans and monitoring will continue; order placement may fail."
+            )
 
     # Show account balance
     balance = get_account_balance()
