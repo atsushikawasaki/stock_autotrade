@@ -17,7 +17,7 @@ STRATEGY_B_CANDLE_BODY_PCT = 30        # bullish candle body >= 30% of range
 STRATEGY_B_SMA_PERIOD = 100            # long-term trend filter (was 200, too strict)
 
 # ─── Grade Filter (only execute signals at or above this grade) ──────────────
-MIN_TRADE_GRADE = "A"  # Only execute A grade signals (fees matter at small size)
+MIN_TRADE_GRADE = "B"  # Execute A and B grade signals
 
 # ─── Strategy Enable Flags ───────────────────────────────────────────────────
 STRATEGY_A_ENABLED = True

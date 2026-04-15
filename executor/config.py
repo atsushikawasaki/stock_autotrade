@@ -48,6 +48,10 @@ MOOMOO_TRADE_PWD = (
     or os.environ.get("MOOMOO_TRADE_PWD", "")
 )
 
+# ─── Trade Environment ────────────────────────────────────────────────────────
+# "SIMULATE" for paper trading, "REAL" for live trading
+TRADE_ENV = os.environ.get("TRADE_ENV", "SIMULATE")
+
 # ─── Trading Rules ────────────────────────────────────────────────────────────
 # Max % of account value per position
 MAX_POSITION_PCT = float(os.environ.get("MAX_POSITION_PCT", "5"))

@@ -17,7 +17,9 @@ from moomoo import (
     ModifyOrderOp,
 )
 
-from config import OPEND_HOST, OPEND_PORT, MOOMOO_TRADE_PWD, MOOMOO_SYMBOL_PREFIX
+from config import OPEND_HOST, OPEND_PORT, MOOMOO_TRADE_PWD, MOOMOO_SYMBOL_PREFIX, TRADE_ENV
+
+_TRD_ENV = TrdEnv.SIMULATE if TRADE_ENV == "SIMULATE" else TrdEnv.REAL
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ def get_account_balance() -> float | None:
     """Get available buying power in USD."""
     ctx = _get_trade_ctx()
     try:
-        ret, data = ctx.accinfo_query(trd_env=TrdEnv.REAL, currency=Currency.USD)
+        ret, data = ctx.accinfo_query(trd_env=_TRD_ENV, currency=Currency.USD)
         if ret == RET_OK:
             power = data.iloc[0].get("power", 0)
             return float(power)
@@ -86,7 +88,7 @@ def place_limit_buy(symbol: str, price: float, qty: int) -> OrderResult:
             code=code,
             trd_side=TrdSide.BUY,
             order_type=OrderType.NORMAL,
-            trd_env=TrdEnv.REAL,
+            trd_env=_TRD_ENV,
         )
         if ret == RET_OK:
             order_id = str(data["order_id"].iloc[0])
@@ -107,7 +109,7 @@ def place_limit_sell(symbol: str, price: float, qty: int) -> OrderResult:
             code=code,
             trd_side=TrdSide.SELL,
             order_type=OrderType.NORMAL,
-            trd_env=TrdEnv.REAL,
+            trd_env=_TRD_ENV,
         )
         if ret == RET_OK:
             order_id = str(data["order_id"].iloc[0])
@@ -128,7 +130,7 @@ def place_market_sell(symbol: str, qty: int) -> OrderResult:
             code=code,
             trd_side=TrdSide.SELL,
             order_type=OrderType.MARKET,
-            trd_env=TrdEnv.REAL,
+            trd_env=_TRD_ENV,
         )
         if ret == RET_OK:
             order_id = str(data["order_id"].iloc[0])
@@ -147,7 +149,7 @@ def cancel_order(order_id: str) -> bool:
             order_id=order_id,
             qty=0,
             price=0,
-            trd_env=TrdEnv.REAL,
+            trd_env=_TRD_ENV,
         )
         return ret == RET_OK
     finally:
@@ -158,7 +160,7 @@ def get_open_orders() -> list[dict]:
     """Get list of currently open orders."""
     ctx = _get_trade_ctx()
     try:
-        ret, data = ctx.order_list_query(trd_env=TrdEnv.REAL)
+        ret, data = ctx.order_list_query(trd_env=_TRD_ENV)
         if ret != RET_OK:
             return []
         active = data[
@@ -173,7 +175,7 @@ def get_positions() -> list[dict]:
     """Get current holdings."""
     ctx = _get_trade_ctx()
     try:
-        ret, data = ctx.position_list_query(trd_env=TrdEnv.REAL)
+        ret, data = ctx.position_list_query(trd_env=_TRD_ENV)
         if ret != RET_OK:
             return []
         return data[data["qty"] > 0].to_dict("records") if len(data) > 0 else []

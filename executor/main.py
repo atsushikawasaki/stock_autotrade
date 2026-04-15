@@ -33,6 +33,7 @@ from config import (
     SUPABASE_SERVICE_KEY,
     POLL_INTERVAL_SECONDS,
     MOOMOO_TRADE_PWD,
+    TRADE_ENV,
 )
 from moomoo_client import unlock_trade, get_account_balance
 from order_manager import (
@@ -229,6 +230,7 @@ def main():
     log.info("US Stock Auto-Trade Executor (All-in-One)")
     log.info("  Poll interval: %ds", POLL_INTERVAL_SECONDS)
     log.info("  Scan interval: %ds", SCAN_INTERVAL_SECONDS)
+    log.info("  Trade env: %s", TRADE_ENV)
     log.info("  Trade password: %s", "set" if MOOMOO_TRADE_PWD else "NOT SET")
     log.info("=" * 60)
 
