@@ -52,5 +52,5 @@ export function proxy(req: NextRequest): NextResponse {
 
 export const config = {
   // Protect everything except Next.js internals and static assets.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+  matcher: ['/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 };
