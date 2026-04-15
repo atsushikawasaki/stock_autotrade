@@ -47,6 +47,7 @@ from strategies import evaluate_all_strategies
 from market_filter import get_market_regime
 from constants import NOTIFY_GRADES, CLAUDE_REVIEW_ENABLED
 from daily_reviewer import generate_daily_review
+from backtest_worker import poll_and_run as poll_backtest_queue
 import notifier
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -265,6 +266,13 @@ def main():
             if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
                 write_heartbeat()
                 last_heartbeat = now
+
+            # Backtest queue (always, regardless of market hours)
+            try:
+                if poll_backtest_queue():
+                    log.info("Backtest request processed")
+            except Exception as e:
+                log.warning("Backtest queue error: %s", e)
 
             if market_open:
                 # Signal scan (every SCAN_INTERVAL_SECONDS)

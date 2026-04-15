@@ -1,12 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-type Status = 'idle' | 'running' | 'success' | 'error';
+type Status = 'idle' | 'pending' | 'running' | 'completed' | 'failed';
 
-interface BacktestResponse {
+interface PollResponse {
   success: boolean;
-  data?: { output: string };
+  data?: {
+    id: string;
+    status: string;
+    output: string | null;
+    error: string | null;
+  };
   error?: string;
 }
 
@@ -15,10 +20,23 @@ export function BacktestRunner() {
   const [output, setOutput] = useState<string | null>(null);
   const [symbol, setSymbol] = useState('');
   const [days, setDays] = useState(365);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
 
   async function runBacktest() {
-    setStatus('running');
+    setStatus('pending');
     setOutput(null);
+    stopPolling();
 
     try {
       const body: Record<string, unknown> = { days };
@@ -32,20 +50,50 @@ export function BacktestRunner() {
         body: JSON.stringify(body),
       });
 
-      const json = (await res.json()) as BacktestResponse;
+      const json = (await res.json()) as { success: boolean; data?: { id: string }; error?: string };
 
-      if (json.success) {
-        setStatus('success');
-        setOutput(json.data?.output ?? 'Done');
-      } else {
-        setStatus('error');
-        setOutput(json.error ?? 'Unknown error');
+      if (!json.success || !json.data?.id) {
+        setStatus('failed');
+        setOutput(json.error ?? 'Failed to enqueue backtest');
+        return;
       }
+
+      const requestId = json.data.id;
+      setOutput('Waiting for local executor to pick up the request...');
+
+      // Poll every 3 seconds
+      pollRef.current = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`/api/backtest?id=${requestId}`);
+          const pollJson = (await pollRes.json()) as PollResponse;
+
+          if (!pollJson.success || !pollJson.data) return;
+
+          const { status: reqStatus, output: reqOutput, error: reqError } = pollJson.data;
+
+          if (reqStatus === 'running') {
+            setStatus('running');
+            setOutput('Backtest is running on local executor...');
+          } else if (reqStatus === 'completed') {
+            setStatus('completed');
+            setOutput(reqOutput ?? 'Backtest completed');
+            stopPolling();
+          } else if (reqStatus === 'failed') {
+            setStatus('failed');
+            setOutput(reqError ?? 'Backtest failed');
+            stopPolling();
+          }
+        } catch {
+          // Polling error — keep trying
+        }
+      }, 3000);
     } catch (err: unknown) {
-      setStatus('error');
+      setStatus('failed');
       setOutput(err instanceof Error ? err.message : 'Network error');
     }
   }
+
+  const isRunning = status === 'pending' || status === 'running';
 
   return (
     <div className="space-y-4">
@@ -61,7 +109,7 @@ export function BacktestRunner() {
             onChange={(e) => setSymbol(e.target.value)}
             placeholder="AAPL"
             className="h-9 w-28 rounded-md border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            disabled={status === 'running'}
+            disabled={isRunning}
           />
         </div>
         <div>
@@ -74,23 +122,23 @@ export function BacktestRunner() {
             value={days}
             onChange={(e) => setDays(Math.max(30, Math.min(3650, Number(e.target.value))))}
             className="h-9 w-20 rounded-md border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            disabled={status === 'running'}
+            disabled={isRunning}
           />
         </div>
         <button
           onClick={runBacktest}
-          disabled={status === 'running'}
+          disabled={isRunning}
           className={
             'inline-flex h-9 items-center gap-2 rounded-md px-4 text-sm font-medium text-white transition ' +
-            (status === 'running'
+            (isRunning
               ? 'cursor-not-allowed bg-zinc-400'
               : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800')
           }
         >
-          {status === 'running' ? (
+          {isRunning ? (
             <>
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Running...
+              {status === 'running' ? 'Running...' : 'Queued...'}
             </>
           ) : (
             'Run Backtest'
@@ -102,9 +150,11 @@ export function BacktestRunner() {
         <pre
           className={
             'max-h-80 overflow-auto rounded-md p-3 text-xs leading-relaxed ' +
-            (status === 'error'
+            (status === 'failed'
               ? 'bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-300'
-              : 'bg-zinc-50 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-300')
+              : status === 'completed'
+                ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                : 'bg-zinc-50 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-300')
           }
         >
           {output}
