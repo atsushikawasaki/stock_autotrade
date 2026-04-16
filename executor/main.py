@@ -59,8 +59,11 @@ HEARTBEAT_INTERVAL_SECONDS = 300  # Health check every 5 min
 log = logging.getLogger("executor")
 
 
+LOG_RETENTION_DAYS = 14
+
+
 def setup_logging() -> None:
-    """Configure logging to stdout + file."""
+    """Configure logging to stdout + file, and clean up old logs."""
     log_dir = Path(__file__).parent / "logs"
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / f"executor_{datetime.now().strftime('%Y%m%d')}.log"
@@ -79,6 +82,20 @@ def setup_logging() -> None:
     root.setLevel(logging.INFO)
     root.addHandler(file_handler)
     root.addHandler(stream_handler)
+
+    _cleanup_old_logs(log_dir)
+
+
+def _cleanup_old_logs(log_dir: Path) -> None:
+    """Delete log files older than LOG_RETENTION_DAYS."""
+    import os
+    cutoff = time.time() - LOG_RETENTION_DAYS * 86400
+    for f in log_dir.glob("executor_*.log"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except OSError:
+            pass
 
 
 def write_heartbeat() -> None:
@@ -263,6 +280,7 @@ def main():
 
     last_scan = 0.0
     last_heartbeat = 0.0
+    daily_review_done = ""  # date string to prevent duplicate reviews
 
     while True:
         try:
@@ -306,11 +324,13 @@ def main():
                         scan_signals()
                         last_scan = now
 
-                        # Daily AI review
-                        if CLAUDE_REVIEW_ENABLED:
+                        # Daily AI review (once per day)
+                        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        if CLAUDE_REVIEW_ENABLED and daily_review_done != today_str:
                             review = generate_daily_review()
                             if review:
                                 notifier.notify_daily_review(review)
+                            daily_review_done = today_str
 
         except KeyboardInterrupt:
             log.info("Executor stopped by user")

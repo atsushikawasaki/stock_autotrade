@@ -22,11 +22,14 @@ def poll_and_run() -> bool:
     """
     Check for pending backtest requests and run the oldest one.
     Returns True if a request was processed, False if queue is empty.
+
+    Uses atomic claim: UPDATE ... WHERE status='pending' to prevent
+    duplicate processing by concurrent workers.
     """
     # Fetch oldest pending request
     result = (
         sb.table("us_backtest_requests")
-        .select("*")
+        .select("id")
         .eq("status", "pending")
         .order("created_at")
         .limit(1)
@@ -36,17 +39,29 @@ def poll_and_run() -> bool:
     if not result.data:
         return False
 
-    req = result.data[0]
-    req_id = req["id"]
+    req_id = result.data[0]["id"]
+
+    # Atomic claim: only update if still pending (prevents race conditions)
+    claim = (
+        sb.table("us_backtest_requests")
+        .update({
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .eq("id", req_id)
+        .eq("status", "pending")  # optimistic lock
+        .select("*")
+        .execute()
+    )
+
+    if not claim.data:
+        log.info("[BACKTEST] Request %s already claimed by another worker", req_id)
+        return False
+
+    req = claim.data[0]
     params = req.get("params") or {}
 
     log.info("[BACKTEST] Processing request %s (params: %s)", req_id, params)
-
-    # Mark as running
-    sb.table("us_backtest_requests").update({
-        "status": "running",
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", req_id).execute()
 
     try:
         mode = params.get("mode", "backtest")
