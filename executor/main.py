@@ -45,7 +45,7 @@ from order_manager import (
 from position_monitor import get_current_price, determine_exit
 from price_client import fetch_daily_prices
 from strategies import evaluate_all_strategies
-from market_filter import get_market_regime
+from market_filter import get_market_regime, get_market_state, check_entry_gate
 from constants import NOTIFY_GRADES, CLAUDE_REVIEW_ENABLED
 from daily_reviewer import generate_daily_review
 from backtest_worker import poll_and_run as poll_backtest_queue
@@ -135,10 +135,17 @@ def scan_signals() -> int:
         print("[SCAN] No active stocks")
         return 0
 
-    market_regime = get_market_regime()
-    print(f"[SCAN] Scanning {len(stocks)} stocks (regime: {market_regime})")
+    market_state = get_market_state()
+    market_regime = market_state.regime
+    print(f"[SCAN] Scanning {len(stocks)} stocks (regime: {market_regime}, {market_state.reason})")
+
+    # Check if market is fully blocked
+    if market_state.entry_blocked:
+        print(f"[SCAN] Market blocked — skipping signal scan ({market_state.reason})")
+        return 0
 
     signals_found = 0
+    signals_gated = 0
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     for stock in stocks:
@@ -152,6 +159,14 @@ def scan_signals() -> int:
 
             for sig in signals:
                 if not sig.triggered:
+                    continue
+
+                # Entry gate: check if market conditions allow this signal
+                gate = check_entry_gate(sig.strategy, sig.grade, market_state)
+                if not gate.allowed:
+                    signals_gated += 1
+                    label = sig.strategy.replace("strategy_", "").upper()
+                    print(f"  [GATE] {code} Strategy {label} grade:{sig.grade} — {gate.reason}")
                     continue
 
                 # Upsert signal
@@ -196,7 +211,8 @@ def scan_signals() -> int:
     # Send all buffered signals as one LINE message
     notifier.flush_signals()
 
-    print(f"[SCAN] Done — {signals_found} signal(s) found")
+    gated_msg = f", {signals_gated} gated" if signals_gated > 0 else ""
+    print(f"[SCAN] Done — {signals_found} signal(s) found{gated_msg}")
     return signals_found
 
 

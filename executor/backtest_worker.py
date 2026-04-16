@@ -10,7 +10,7 @@ from supabase import create_client
 
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 from backtest import backtest_stock, summarize_trades, save_results_to_supabase
-from price_client import fetch_daily_prices
+from price_client import fetch_daily_prices, fetch_daily_prices_cached
 from market_filter import get_market_regime
 
 log = logging.getLogger("backtest_worker")
@@ -65,7 +65,9 @@ def poll_and_run() -> bool:
 
     try:
         mode = params.get("mode", "backtest")
-        if mode == "optimize":
+        if mode == "walk_forward":
+            output = _run_walk_forward(params)
+        elif mode == "optimize":
             output = _run_optimization(params)
         else:
             output = _run_backtest(params)
@@ -94,7 +96,7 @@ def poll_and_run() -> bool:
 def _run_backtest(params: dict) -> str:
     """Run backtest with given parameters. Returns summary text."""
     symbol = params.get("symbol")
-    days = int(params.get("days", 365))
+    days = int(params.get("days", 730))
 
     market_regime = get_market_regime()
     lines: list[str] = [f"Market regime: {market_regime}", f"Lookback: {days} days", ""]
@@ -119,7 +121,7 @@ def _run_backtest(params: dict) -> str:
 
     for sym in symbols:
         try:
-            prices = fetch_daily_prices(sym, days)
+            prices = fetch_daily_prices_cached(sym, days)
             if len(prices) < 80:
                 continue
 
@@ -178,6 +180,70 @@ def _run_backtest(params: dict) -> str:
     if all_results:
         save_results_to_supabase(all_results)
         lines.append(f"\nSaved {len([r for r in all_results if r.total_trades > 0])} results to Supabase")
+
+    return "\n".join(lines)
+
+
+def _run_walk_forward(params: dict) -> str:
+    """Run walk-forward optimization. Returns summary text."""
+    from optimizer import run_walk_forward
+
+    max_combos = int(params.get("max_combos", 50))
+    days = int(params.get("days", 730))
+    sample_stocks = int(params.get("sample_stocks", 20))
+    train_days = int(params.get("train_days", 250))
+    test_days = int(params.get("test_days", 125))
+    step_days = int(params.get("step_days", 125))
+
+    wf = run_walk_forward(
+        sample_stocks=sample_stocks,
+        days=days,
+        max_combos=max_combos,
+        train_days=train_days,
+        test_days=test_days,
+        step_days=step_days,
+    )
+
+    if wf is None:
+        return "Walk-forward optimization produced no results (insufficient data)"
+
+    p = wf.best_params
+    lines = [
+        "Walk-Forward Optimization Results",
+        "=" * 50,
+        "",
+        f"Windows: {len(wf.windows)}",
+        f"OOS trades: {wf.oos_total_trades}",
+        f"OOS win rate: {wf.oos_win_rate:.1f}%",
+        f"OOS avg return: {wf.oos_avg_return:+.2f}%",
+        f"OOS Sharpe: {f'{wf.oos_sharpe:.2f}' if wf.oos_sharpe else 'N/A'}",
+        f"Robustness: {wf.robustness_score:.2f}",
+        "",
+        "Per-window breakdown:",
+    ]
+
+    for w in wf.windows:
+        lines.append(
+            f"  Window {w.window_id}: "
+            f"train({w.train_result.avg_return:+.2f}% "
+            f"sharpe={f'{w.train_result.sharpe:.2f}' if w.train_result.sharpe else 'N/A'}) -> "
+            f"test({w.test_result.avg_return:+.2f}% "
+            f"sharpe={f'{w.test_result.sharpe:.2f}' if w.test_result.sharpe else 'N/A'})"
+        )
+        lines.append(
+            f"    params: lookback={w.train_params.breakout_lookback} "
+            f"rsi={w.train_params.rsi_min}-{w.train_params.rsi_max} "
+            f"vol={w.train_params.volume_ratio_min} "
+            f"sl={w.train_params.sl_atr_mult} tp={w.train_params.tp_atr_mult} "
+            f"adx={w.train_params.adx_min}"
+        )
+
+    lines.append("")
+    lines.append(
+        f"Best params: lookback={p.breakout_lookback} "
+        f"rsi={p.rsi_min}-{p.rsi_max} vol={p.volume_ratio_min} "
+        f"sl={p.sl_atr_mult} tp={p.tp_atr_mult} adx={p.adx_min}"
+    )
 
     return "\n".join(lines)
 

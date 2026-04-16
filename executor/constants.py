@@ -65,8 +65,23 @@ STRATEGY_C_BELOW_KUMO_PENALTY = -10
 
 # ─── Market Filter ────────────────────────────────────────────────────────────
 MARKET_INDEX_SYMBOL = "SPY"
+MARKET_VIX_SYMBOL = "^VIX"          # moomoo: US.UVIX or yfinance: ^VIX
 MARKET_SMA_FAST = 50
 MARKET_SMA_SLOW = 200
+
+# Entry gate thresholds
+MARKET_VIX_CAUTION = 25             # VIX above this → caution (A-grade only)
+MARKET_VIX_BLOCK = 35               # VIX above this → block all new entries
+MARKET_SMA_SPREAD_BEAR = -2.0       # SMA50/SMA200 spread % below this → strong bear
+MARKET_SPY_BELOW_SMA200_DAYS = 5    # SPY below SMA200 for N days → confirmed bear
+
+# Per-strategy entry rules in bear/caution regime
+# "block" = no entries, "grade_a_only" = only A-grade, "allow" = normal
+MARKET_GATE_STRATEGY_A_BEAR = "block"
+MARKET_GATE_STRATEGY_A_CAUTION = "grade_a_only"
+MARKET_GATE_STRATEGY_B_BEAR = "allow"       # reversal strategy can work in bear
+MARKET_GATE_STRATEGY_C_BEAR = "block"
+MARKET_GATE_STRATEGY_C_CAUTION = "grade_a_only"
 
 # ─── Claude AI ────────────────────────────────────────────────────────────────
 CLAUDE_ENABLED = True              # Entry validation gate

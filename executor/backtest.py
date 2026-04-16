@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from price_client import PriceRow, fetch_daily_prices
+from price_client import PriceRow, fetch_daily_prices, fetch_daily_prices_cached
 from strategies import evaluate_all_strategies
 from market_filter import get_market_regime
 from constants import (
@@ -274,8 +274,9 @@ def save_results_to_supabase(results: list[BacktestResult]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backtest Strategy A/B/C")
     parser.add_argument("--symbol", type=str, help="Single stock symbol (e.g. AAPL)")
-    parser.add_argument("--days", type=int, default=365, help="Lookback days (default: 365)")
+    parser.add_argument("--days", type=int, default=730, help="Lookback days (default: 730)")
     parser.add_argument("--save", action="store_true", help="Save results to Supabase")
+    parser.add_argument("--no-cache", action="store_true", help="Skip Supabase cache, fetch directly from moomoo")
     args = parser.parse_args()
 
     market_regime = get_market_regime()
@@ -297,8 +298,10 @@ def main() -> None:
     all_results: list[BacktestResult] = []
     all_trades: list[Trade] = []
 
+    _fetch = fetch_daily_prices if args.no_cache else fetch_daily_prices_cached
+
     for sym in symbols:
-        prices = fetch_daily_prices(sym, args.days)
+        prices = _fetch(sym, args.days)
         if len(prices) < 80:
             print(f"  {sym}: insufficient data ({len(prices)} bars)")
             continue
