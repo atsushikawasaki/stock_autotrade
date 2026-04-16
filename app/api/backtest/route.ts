@@ -9,6 +9,9 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 interface BacktestParams {
   symbol?: string;
   days?: number;
+  mode?: string;
+  max_combos?: number;
+  sample_stocks?: number;
 }
 
 function parseBody(body: unknown): BacktestParams {
@@ -20,6 +23,15 @@ function parseBody(body: unknown): BacktestParams {
   }
   if (typeof obj.days === 'number' && obj.days > 0 && obj.days <= 3650) {
     params.days = Math.floor(obj.days);
+  }
+  if (obj.mode === 'optimize') {
+    params.mode = 'optimize';
+    if (typeof obj.max_combos === 'number' && obj.max_combos > 0) {
+      params.max_combos = Math.min(Math.floor(obj.max_combos), 200);
+    }
+    if (typeof obj.sample_stocks === 'number' && obj.sample_stocks > 0) {
+      params.sample_stocks = Math.min(Math.floor(obj.sample_stocks), 50);
+    }
   }
   return params;
 }

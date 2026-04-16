@@ -49,7 +49,11 @@ def poll_and_run() -> bool:
     }).eq("id", req_id).execute()
 
     try:
-        output = _run_backtest(params)
+        mode = params.get("mode", "backtest")
+        if mode == "optimize":
+            output = _run_optimization(params)
+        else:
+            output = _run_backtest(params)
 
         sb.table("us_backtest_requests").update({
             "status": "completed",
@@ -159,5 +163,46 @@ def _run_backtest(params: dict) -> str:
     if all_results:
         save_results_to_supabase(all_results)
         lines.append(f"\nSaved {len([r for r in all_results if r.total_trades > 0])} results to Supabase")
+
+    return "\n".join(lines)
+
+
+def _run_optimization(params: dict) -> str:
+    """Run parameter optimization. Returns summary text."""
+    from optimizer import run_optimization
+
+    max_combos = int(params.get("max_combos", 50))
+    days = int(params.get("days", 365))
+    sample_stocks = int(params.get("sample_stocks", 20))
+
+    results = run_optimization(
+        sample_stocks=sample_stocks,
+        days=days,
+        max_combos=max_combos,
+    )
+
+    if not results:
+        return "No optimization results (no data)"
+
+    lines = ["Parameter Optimization Results", "=" * 50, ""]
+    for i, r in enumerate(results[:10], 1):
+        lines.append(
+            f"#{i} score={r.score:.2f} | trades={r.total_trades} "
+            f"win={r.win_rate:.1f}% avg={r.avg_return:+.2f}% "
+            f"sharpe={f'{r.sharpe:.2f}' if r.sharpe else 'N/A'}"
+        )
+        lines.append(
+            f"   lookback={r.params.breakout_lookback} rsi={r.params.rsi_min}-{r.params.rsi_max} "
+            f"vol={r.params.volume_ratio_min} sl={r.params.sl_atr_mult} tp={r.params.tp_atr_mult} "
+            f"adx={r.params.adx_min}"
+        )
+
+    best = results[0]
+    lines.append("")
+    lines.append(f"Best params saved to us_optimization_results (top 10)")
+    lines.append(f"Recommended: lookback={best.params.breakout_lookback} "
+                 f"rsi={best.params.rsi_min}-{best.params.rsi_max} "
+                 f"vol={best.params.volume_ratio_min} sl={best.params.sl_atr_mult} "
+                 f"tp={best.params.tp_atr_mult} adx={best.params.adx_min}")
 
     return "\n".join(lines)

@@ -240,7 +240,9 @@ def main():
     # only a warning here so the daemon keeps running (scans, heartbeat, and
     # position monitoring all work without trade unlock). Order placement will
     # fail until the user unlocks from the GUI.
-    if MOOMOO_TRADE_PWD:
+    if TRADE_ENV == "SIMULATE":
+        log.info("SIMULATE mode — skipping trade unlock")
+    elif MOOMOO_TRADE_PWD:
         if not unlock_trade():
             log.warning(
                 "API unlock failed — please unlock from moomoo OpenD GUI. "
