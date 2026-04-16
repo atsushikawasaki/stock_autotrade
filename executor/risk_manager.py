@@ -22,13 +22,11 @@ class RiskCheck:
     reason: str
 
 
-def _get_sb():
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
 def check_daily_loss(account_balance: float) -> RiskCheck:
     """Check if today's realized losses exceed the daily limit."""
-    sb = _get_sb()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     result = (
@@ -60,7 +58,6 @@ def check_daily_loss(account_balance: float) -> RiskCheck:
 
 def check_sector_concentration(stock_code: str) -> RiskCheck:
     """Check if adding this stock would over-concentrate a sector."""
-    sb = _get_sb()
 
     # Get sector for the target stock
     stock_result = sb.table("us_stocks").select("sector").eq("code", stock_code).execute()
@@ -106,7 +103,6 @@ def check_sector_concentration(stock_code: str) -> RiskCheck:
 
 def check_position_limit() -> RiskCheck:
     """Check if we've reached the maximum number of concurrent positions."""
-    sb = _get_sb()
     result = (
         sb.table("us_positions")
         .select("id", count="exact")

@@ -5,11 +5,16 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from supabase import create_client
+
+from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 from price_client import fetch_current_price
 from constants import CLAUDE_EXIT_ENABLED
 from claude_validator import advise_exit
 
 log = logging.getLogger("position_monitor")
+
+sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
 def get_current_price(symbol: str) -> float | None:
@@ -84,9 +89,6 @@ def _tighten_stop_loss(position: dict, current_price: float) -> None:
         return  # Don't lower the stop-loss
 
     try:
-        from supabase import create_client
-        from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
-        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         sb.table("us_positions").update({
             "stop_loss": new_sl,
         }).eq("id", position["id"]).execute()

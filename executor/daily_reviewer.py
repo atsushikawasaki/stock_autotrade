@@ -6,12 +6,13 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from anthropic import Anthropic, APIError, APITimeoutError
+from anthropic import APIError, APITimeoutError
 from supabase import create_client
 
-from config import ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
+from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 from constants import CLAUDE_MODEL, CLAUDE_TIMEOUT_SECONDS
 from market_filter import get_market_regime
+from claude_validator import _get_client
 
 log = logging.getLogger("daily_reviewer")
 
@@ -114,7 +115,8 @@ def generate_daily_review() -> str | None:
     Returns the review text (markdown), or None on failure.
     Saves the review to us_daily_reviews table.
     """
-    if not ANTHROPIC_API_KEY:
+    client = _get_client()
+    if client is None:
         log.info("[REVIEW] No API key — skipping daily review")
         return None
 
@@ -127,7 +129,6 @@ def generate_daily_review() -> str | None:
         return None
 
     try:
-        client = Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=512,

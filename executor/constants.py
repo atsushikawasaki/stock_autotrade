@@ -78,4 +78,4 @@ CLAUDE_TIMEOUT_SECONDS = 15
 CLAUDE_EARNINGS_BLACKOUT_DAYS = 5  # Caution zone around earnings
 
 # ─── Notification ─────────────────────────────────────────────────────────────
-NOTIFY_GRADES = ("A", "B", "C")
+NOTIFY_GRADES = ("A", "B")  # Aligned with MIN_TRADE_GRADE

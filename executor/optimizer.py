@@ -55,23 +55,36 @@ DEFAULT_GRID = {
 }
 
 
-def _apply_params(params: ParamSet) -> None:
-    """Temporarily override constants with given params."""
-    import constants
-    constants.STRATEGY_A_BREAKOUT_LOOKBACK = params.breakout_lookback
-    constants.STRATEGY_A_RSI_MIN = params.rsi_min
-    constants.STRATEGY_A_RSI_MAX = params.rsi_max
-    constants.STRATEGY_A_VOLUME_RATIO_MIN = params.volume_ratio_min
-    constants.STRATEGY_A_SL_ATR_MULT = params.sl_atr_mult
-    constants.STRATEGY_A_TP_ATR_MULT = params.tp_atr_mult
-    constants.STRATEGY_A_ADX_MIN = params.adx_min
+class _OverrideParams:
+    """Context manager to temporarily override Strategy A constants."""
 
+    def __init__(self, params: ParamSet) -> None:
+        self._params = params
+        self._originals: dict[str, object] = {}
 
-def _restore_defaults() -> None:
-    """Restore original constants (reimport)."""
-    import importlib
-    import constants
-    importlib.reload(constants)
+    def __enter__(self) -> None:
+        import constants
+        fields = (
+            "STRATEGY_A_BREAKOUT_LOOKBACK", "STRATEGY_A_RSI_MIN",
+            "STRATEGY_A_RSI_MAX", "STRATEGY_A_VOLUME_RATIO_MIN",
+            "STRATEGY_A_SL_ATR_MULT", "STRATEGY_A_TP_ATR_MULT",
+            "STRATEGY_A_ADX_MIN",
+        )
+        for f in fields:
+            self._originals[f] = getattr(constants, f)
+
+        constants.STRATEGY_A_BREAKOUT_LOOKBACK = self._params.breakout_lookback
+        constants.STRATEGY_A_RSI_MIN = self._params.rsi_min
+        constants.STRATEGY_A_RSI_MAX = self._params.rsi_max
+        constants.STRATEGY_A_VOLUME_RATIO_MIN = self._params.volume_ratio_min
+        constants.STRATEGY_A_SL_ATR_MULT = self._params.sl_atr_mult
+        constants.STRATEGY_A_TP_ATR_MULT = self._params.tp_atr_mult
+        constants.STRATEGY_A_ADX_MIN = self._params.adx_min
+
+    def __exit__(self, *exc: object) -> None:
+        import constants
+        for attr, val in self._originals.items():
+            setattr(constants, attr, val)
 
 
 def _calc_score(win_rate: float, avg_return: float, sharpe: float | None, total_trades: int) -> float:
@@ -97,22 +110,20 @@ def _fetch_sample_stocks(n: int = 20) -> list[str]:
 
 def _evaluate_params(params: ParamSet, symbols: list[str], days: int, regime: str) -> OptResult:
     """Run backtest with given params on sample stocks."""
-    _apply_params(params)
-
     all_trades = []
-    for sym in symbols:
-        try:
-            prices = fetch_daily_prices(sym, days)
-            if len(prices) < 80:
-                continue
-            trades = backtest_stock(sym, prices, regime)
-            # Only Strategy A trades (since we're tuning Strategy A params)
-            a_trades = [t for t in trades if t.strategy == "strategy_a"]
-            all_trades.extend(a_trades)
-        except Exception:
-            continue
 
-    _restore_defaults()
+    with _OverrideParams(params):
+        for sym in symbols:
+            try:
+                prices = fetch_daily_prices(sym, days)
+                if len(prices) < 80:
+                    continue
+                trades = backtest_stock(sym, prices, regime)
+                # Only Strategy A trades (since we're tuning Strategy A params)
+                a_trades = [t for t in trades if t.strategy == "strategy_a"]
+                all_trades.extend(a_trades)
+            except Exception:
+                continue
 
     if not all_trades:
         return OptResult(
