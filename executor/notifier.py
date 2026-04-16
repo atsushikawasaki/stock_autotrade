@@ -1,40 +1,48 @@
-"""LINE Notify integration for trade events."""
+"""LINE Messaging API integration for trade events."""
 
 from __future__ import annotations
 
+import json
 import os
 import urllib.request
-import urllib.parse
 from datetime import datetime, timezone
 
 
-LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN", "")
-LINE_NOTIFY_URL = "https://notify-api.line.me/api/notify"
+LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_USER_ID = os.environ.get("LINE_USER_ID", "")
+LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
 
 
 def _send(message: str) -> bool:
-    """Send a message via LINE Notify. Returns True on success."""
-    if not LINE_NOTIFY_TOKEN:
+    """Send a message via LINE Messaging API (push). Returns True on success."""
+    if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
         return False
 
-    data = urllib.parse.urlencode({"message": message}).encode("utf-8")
+    payload = json.dumps({
+        "to": LINE_USER_ID,
+        "messages": [{"type": "text", "text": message.strip()}],
+    }).encode("utf-8")
+
     req = urllib.request.Request(
-        LINE_NOTIFY_URL,
-        data=data,
-        headers={"Authorization": f"Bearer {LINE_NOTIFY_TOKEN}"},
+        LINE_PUSH_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+        },
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status == 200
     except Exception as e:
-        print(f"[WARN] LINE notify failed: {e}")
+        print(f"[WARN] LINE push failed: {e}")
         return False
 
 
 def is_enabled() -> bool:
     """Check if LINE notifications are configured."""
-    return bool(LINE_NOTIFY_TOKEN)
+    return bool(LINE_CHANNEL_ACCESS_TOKEN and LINE_USER_ID)
 
 
 def notify_signal(
