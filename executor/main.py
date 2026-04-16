@@ -168,13 +168,16 @@ def scan_signals() -> int:
                 )
 
                 if sig.grade in NOTIFY_GRADES:
-                    notifier.notify_signal(
+                    notifier.buffer_signal(
                         code, sig.strategy, sig.grade, sig.score,
                         sig.entry_price, sig.stop_loss, sig.take_profit, sig.reason,
                     )
 
         except Exception as e:
             print(f"  [ERR] {code}: {e}")
+
+    # Send all buffered signals as one LINE message
+    notifier.flush_signals()
 
     print(f"[SCAN] Done — {signals_found} signal(s) found")
     return signals_found

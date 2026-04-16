@@ -45,7 +45,10 @@ def is_enabled() -> bool:
     return bool(LINE_CHANNEL_ACCESS_TOKEN and LINE_USER_ID)
 
 
-def notify_signal(
+_signal_buffer: list[str] = []
+
+
+def buffer_signal(
     stock_code: str,
     strategy: str,
     grade: str,
@@ -54,20 +57,31 @@ def notify_signal(
     stop_loss: float | None,
     take_profit: float | None,
     reason: str,
-) -> bool:
-    """Notify when a new signal is detected."""
-    label = strategy.replace("strategy_", "Strategy ").upper()
+) -> None:
+    """Buffer a signal for batch notification. Call flush_signals() to send."""
+    label = strategy.replace("strategy_", "").upper()
     sl_str = f"${stop_loss:.2f}" if stop_loss else "-"
     tp_str = f"${take_profit:.2f}" if take_profit else "-"
 
-    msg = (
-        f"\n[Signal] {stock_code} {label}"
-        f"\nGrade: {grade} (score: {score})"
-        f"\nEntry: ${entry_price:.2f}"
-        f"\nSL: {sl_str} / TP: {tp_str}"
-        f"\n{reason}"
+    line = (
+        f"[{grade}] {stock_code} {label} score:{score}"
+        f" Entry:${entry_price:.2f} SL:{sl_str} TP:{tp_str}"
     )
-    return _send(msg)
+    _signal_buffer.append(line)
+
+
+def flush_signals() -> bool:
+    """Send all buffered signals as a single LINE message. Returns True on success."""
+    if not _signal_buffer:
+        return True
+
+    header = f"[Signals] {len(_signal_buffer)} detected"
+    body = "\n".join(_signal_buffer)
+    msg = f"{header}\n\n{body}"
+
+    sent = _send(msg)
+    _signal_buffer.clear()
+    return sent
 
 
 def notify_order_executed(
