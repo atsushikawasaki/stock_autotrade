@@ -69,4 +69,4 @@ ANTHROPIC_API_KEY = (
 )
 
 # ─── Polling ──────────────────────────────────────────────────────────────────
-POLL_INTERVAL_SECONDS = 60
+POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "15"))

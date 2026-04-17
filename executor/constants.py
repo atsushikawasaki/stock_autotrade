@@ -45,6 +45,12 @@ MAX_HOLDING_DAYS_C = 30
 TP_ATR_MULTIPLIER_BULL = 3.5
 SL_ATR_MULTIPLIER_BEAR = 1.5
 
+# ─── Server-Side Exit Orders ─────────────────────────────────────────────────
+# Trailing stop: trails the high-water mark by this % — lets winners run
+TRAILING_STOP_PCT = 5.0               # 5% below peak
+# Enable server-side SL/TP/trailing orders on moomoo (vs. polling-based exits)
+SERVER_SIDE_EXITS_ENABLED = True
+
 # ─── Order Price Validation ──────────────────────────────────────────────────
 MAX_ENTRY_PRICE_DEVIATION_PCT = 5.0   # reject if entry vs market price deviates > 5%
 

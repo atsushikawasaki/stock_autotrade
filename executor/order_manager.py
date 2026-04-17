@@ -19,13 +19,23 @@ from moomoo_client import (
     place_limit_buy,
     place_limit_sell,
     place_market_sell,
+    place_stop_sell,
+    place_trailing_stop_sell,
+    place_take_profit_sell,
     wait_for_fill,
     cancel_order,
+    cancel_orders,
     OrderResult,
 )
 import notifier
 import risk_manager
-from constants import CLAUDE_ENABLED, MIN_TRADE_GRADE, MAX_ENTRY_PRICE_DEVIATION_PCT
+from constants import (
+    CLAUDE_ENABLED,
+    MIN_TRADE_GRADE,
+    MAX_ENTRY_PRICE_DEVIATION_PCT,
+    SERVER_SIDE_EXITS_ENABLED,
+    TRAILING_STOP_PCT,
+)
 from claude_validator import validate_entry
 from price_client import fetch_current_price
 
@@ -173,16 +183,26 @@ def execute_signal(signal: dict) -> bool:
         "moomoo_order_id": result.order_id,
     }).eq("id", signal_id).execute()
 
+    # Place server-side exit orders (SL + trailing stop)
+    exit_order_ids = [result.order_id]
+    sl_price = signal.get("stop_loss")
+    tp_price = signal.get("take_profit")
+
+    if SERVER_SIDE_EXITS_ENABLED:
+        exit_order_ids = _place_exit_orders(
+            stock_code, fill_qty, fill_price, sl_price, tp_price, exit_order_ids,
+        )
+
     # Create position record with actual fill price
     sb.table("us_positions").insert({
         "signal_id": signal_id,
         "stock_code": stock_code,
         "entry_price": fill_price,
         "quantity": fill_qty,
-        "stop_loss": signal.get("stop_loss"),
-        "take_profit": signal.get("take_profit"),
+        "stop_loss": sl_price,
+        "take_profit": tp_price,
         "status": "open",
-        "moomoo_order_ids": [result.order_id],
+        "moomoo_order_ids": exit_order_ids,
     }).execute()
 
     print(f"[BUY] {stock_code} x{fill_qty} @ ${fill_price:.2f} (order: {result.order_id})")
@@ -190,6 +210,51 @@ def execute_signal(signal: dict) -> bool:
         stock_code, signal.get("strategy", ""), fill_qty, fill_price, result.order_id or "",
     )
     return True
+
+
+def _place_exit_orders(
+    stock_code: str,
+    qty: int,
+    entry_price: float,
+    sl_price: float | None,
+    tp_price: float | None,
+    order_ids: list[str],
+) -> list[str]:
+    """Place server-side SL and trailing stop orders after entry fill.
+
+    Strategy:
+    - STOP order at SL price as safety net (hard floor)
+    - TRAILING_STOP to lock in profits as price rises
+    - No fixed TP — trailing stop replaces it for better upside capture
+
+    Returns updated list of order IDs.
+    """
+    ids = list(order_ids)
+
+    # 1. Stop-loss order (hard floor)
+    if sl_price is not None:
+        sl_result = place_stop_sell(stock_code, qty, float(sl_price))
+        if sl_result.success:
+            ids.append(sl_result.order_id)
+            print(f"  [SL] {stock_code} stop @ ${float(sl_price):.2f} (order: {sl_result.order_id})")
+        else:
+            print(f"  [SL] {stock_code} stop order failed: {sl_result.message}")
+
+    # 2. Trailing stop (profit lock — replaces fixed TP)
+    trail_result = place_trailing_stop_sell(stock_code, qty, TRAILING_STOP_PCT)
+    if trail_result.success:
+        ids.append(trail_result.order_id)
+        print(f"  [TRAIL] {stock_code} trailing {TRAILING_STOP_PCT}% (order: {trail_result.order_id})")
+    else:
+        # Fallback: use fixed TP if trailing stop not supported
+        print(f"  [TRAIL] {stock_code} trailing failed: {trail_result.message}")
+        if tp_price is not None:
+            tp_result = place_take_profit_sell(stock_code, qty, float(tp_price))
+            if tp_result.success:
+                ids.append(tp_result.order_id)
+                print(f"  [TP] {stock_code} take-profit @ ${float(tp_price):.2f} (order: {tp_result.order_id})")
+
+    return ids
 
 
 def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
@@ -204,28 +269,44 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
     if time.time() < cooldown_until:
         return False
 
-    # Place sell order
-    if exit_reason in ("stop_loss", "time_expiry"):
-        result = place_market_sell(stock_code, qty)
+    # Cancel remaining server-side exit orders to prevent double-sell
+    # (Not needed for server_side_exit — that order already filled)
+    if exit_reason != "server_side_exit" and SERVER_SIDE_EXITS_ENABLED:
+        order_ids = position.get("moomoo_order_ids") or []
+        if len(order_ids) > 1:
+            exit_ids = order_ids[1:]
+            cancelled = cancel_orders(exit_ids)
+            if cancelled > 0:
+                print(f"  [CANCEL] {stock_code}: cancelled {cancelled}/{len(exit_ids)} exit orders before {exit_reason}")
+
+    # Server-side exit: moomoo already filled the order — skip placing a new sell
+    if exit_reason == "server_side_exit":
+        actual_exit_price = exit_price  # already the fill price from moomoo
+        actual_qty = qty
+        sell_order_id = None
     else:
-        result = place_limit_sell(stock_code, exit_price, qty)
+        # Place sell order
+        if exit_reason in ("stop_loss", "time_expiry"):
+            result = place_market_sell(stock_code, qty)
+        else:
+            result = place_limit_sell(stock_code, exit_price, qty)
 
-    if not result.success:
-        print(f"[FAIL] {stock_code} sell failed: {result.message}")
-        _exit_fail_cooldown[position_id] = time.time() + _EXIT_COOLDOWN_SECONDS
-        notifier.notify_order_failed(stock_code, "exit", result.message)
-        return False
+        if not result.success:
+            print(f"[FAIL] {stock_code} sell failed: {result.message}")
+            _exit_fail_cooldown[position_id] = time.time() + _EXIT_COOLDOWN_SECONDS
+            notifier.notify_order_failed(stock_code, "exit", result.message)
+            return False
 
-    # Wait for fill confirmation
-    fill = wait_for_fill(result.order_id, timeout_seconds=30)
-    if not fill.filled:
-        print(f"[NOFILL] {stock_code} sell order {result.order_id} not filled: {fill.message}")
-        _exit_fail_cooldown[position_id] = time.time() + _EXIT_COOLDOWN_SECONDS
-        return False
+        # Wait for fill confirmation
+        fill = wait_for_fill(result.order_id, timeout_seconds=30)
+        if not fill.filled:
+            print(f"[NOFILL] {stock_code} sell order {result.order_id} not filled: {fill.message}")
+            _exit_fail_cooldown[position_id] = time.time() + _EXIT_COOLDOWN_SECONDS
+            return False
 
-    # Use actual fill price
-    actual_exit_price = fill.dealt_avg_price if fill.dealt_avg_price > 0 else exit_price
-    actual_qty = fill.dealt_qty if fill.dealt_qty > 0 else qty
+        actual_exit_price = fill.dealt_avg_price if fill.dealt_avg_price > 0 else exit_price
+        actual_qty = fill.dealt_qty if fill.dealt_qty > 0 else qty
+        sell_order_id = result.order_id
 
     now = datetime.now(timezone.utc)
     entry_price = float(position["entry_price"])
@@ -234,8 +315,9 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
     holding_days = (now - opened_at).days
 
     # Update position
-    order_ids = position.get("moomoo_order_ids") or []
-    order_ids.append(result.order_id)
+    order_ids = list(position.get("moomoo_order_ids") or [])
+    if sell_order_id is not None:
+        order_ids.append(sell_order_id)
 
     sb.table("us_positions").update({
         "status": "closed",

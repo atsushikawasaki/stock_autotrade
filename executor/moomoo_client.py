@@ -14,6 +14,7 @@ from moomoo import (
     TrdEnv,
     TrdMarket,
     TrdSide,
+    TrailType,
     ModifyOrderOp,
 )
 
@@ -208,6 +209,86 @@ def get_positions() -> list[dict]:
         return data[data["qty"] > 0].to_dict("records") if len(data) > 0 else []
 
     return _call_ctx(_do)
+
+
+def place_stop_sell(symbol: str, qty: int, stop_price: float) -> OrderResult:
+    """Place a stop-loss sell order (GTC). Triggers market sell when price <= stop_price."""
+    code = to_moomoo_code(symbol)
+
+    def _do(ctx):
+        ret, data = ctx.place_order(
+            price=0, qty=qty, code=code,
+            trd_side=TrdSide.SELL,
+            order_type=OrderType.STOP,
+            aux_price=stop_price,
+            time_in_force="GTC",
+            trd_env=_TRD_ENV,
+        )
+        if ret == RET_OK:
+            return OrderResult(success=True, order_id=str(data["order_id"].iloc[0]), message="OK")
+        return OrderResult(success=False, order_id=None, message=str(data))
+
+    return _call_ctx(_do)
+
+
+def place_trailing_stop_sell(
+    symbol: str, qty: int, trail_ratio: float, trail_spread: float = 0,
+) -> OrderResult:
+    """Place a trailing stop sell order (GTC).
+
+    Args:
+        symbol: stock ticker
+        qty: number of shares
+        trail_ratio: trailing percentage (e.g. 5.0 for 5%)
+        trail_spread: additional spread in dollars (default 0)
+    """
+    code = to_moomoo_code(symbol)
+
+    def _do(ctx):
+        ret, data = ctx.place_order(
+            price=0, qty=qty, code=code,
+            trd_side=TrdSide.SELL,
+            order_type=OrderType.TRAILING_STOP,
+            trail_type=TrailType.RATIO,
+            trail_value=trail_ratio,
+            trail_spread=trail_spread,
+            time_in_force="GTC",
+            trd_env=_TRD_ENV,
+        )
+        if ret == RET_OK:
+            return OrderResult(success=True, order_id=str(data["order_id"].iloc[0]), message="OK")
+        return OrderResult(success=False, order_id=None, message=str(data))
+
+    return _call_ctx(_do)
+
+
+def place_take_profit_sell(symbol: str, qty: int, trigger_price: float) -> OrderResult:
+    """Place a take-profit sell (MARKET_IF_TOUCHED, GTC). Triggers when price >= trigger_price."""
+    code = to_moomoo_code(symbol)
+
+    def _do(ctx):
+        ret, data = ctx.place_order(
+            price=0, qty=qty, code=code,
+            trd_side=TrdSide.SELL,
+            order_type=OrderType.MARKET_IF_TOUCHED,
+            aux_price=trigger_price,
+            time_in_force="GTC",
+            trd_env=_TRD_ENV,
+        )
+        if ret == RET_OK:
+            return OrderResult(success=True, order_id=str(data["order_id"].iloc[0]), message="OK")
+        return OrderResult(success=False, order_id=None, message=str(data))
+
+    return _call_ctx(_do)
+
+
+def cancel_orders(order_ids: list[str]) -> int:
+    """Cancel multiple orders. Returns count of successfully cancelled."""
+    cancelled = 0
+    for oid in order_ids:
+        if cancel_order(oid):
+            cancelled += 1
+    return cancelled
 
 
 def query_order_fill(order_id: str) -> OrderFill:
