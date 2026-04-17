@@ -216,9 +216,20 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
         notifier.notify_order_failed(stock_code, "exit", result.message)
         return False
 
+    # Wait for fill confirmation
+    fill = wait_for_fill(result.order_id, timeout_seconds=30)
+    if not fill.filled:
+        print(f"[NOFILL] {stock_code} sell order {result.order_id} not filled: {fill.message}")
+        _exit_fail_cooldown[position_id] = time.time() + _EXIT_COOLDOWN_SECONDS
+        return False
+
+    # Use actual fill price
+    actual_exit_price = fill.dealt_avg_price if fill.dealt_avg_price > 0 else exit_price
+    actual_qty = fill.dealt_qty if fill.dealt_qty > 0 else qty
+
     now = datetime.now(timezone.utc)
     entry_price = float(position["entry_price"])
-    return_pct = round(((exit_price - entry_price) / entry_price) * 100, 2)
+    return_pct = round(((actual_exit_price - entry_price) / entry_price) * 100, 2)
     opened_at = datetime.fromisoformat(position["opened_at"].replace("Z", "+00:00"))
     holding_days = (now - opened_at).days
 
@@ -232,19 +243,19 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
         "moomoo_order_ids": order_ids,
     }).eq("id", position_id).execute()
 
-    # Record outcome
+    # Record outcome with actual fill price
     sb.table("us_signal_outcomes").insert({
         "signal_id": signal_id,
         "position_id": position_id,
         "exit_date": now.strftime("%Y-%m-%d"),
-        "exit_price": exit_price,
+        "exit_price": actual_exit_price,
         "exit_reason": exit_reason,
         "return_pct": return_pct,
         "holding_days": holding_days,
     }).execute()
 
-    pnl = (exit_price - entry_price) * qty
+    pnl = (actual_exit_price - entry_price) * actual_qty
     emoji = "+" if return_pct >= 0 else ""
-    print(f"[SELL] {stock_code} x{qty} @ ${exit_price:.2f} ({exit_reason}) {emoji}{return_pct}%")
-    notifier.notify_exit(stock_code, exit_reason, entry_price, exit_price, qty, pnl)
+    print(f"[SELL] {stock_code} x{actual_qty} @ ${actual_exit_price:.2f} ({exit_reason}) {emoji}{return_pct}%")
+    notifier.notify_exit(stock_code, exit_reason, entry_price, actual_exit_price, actual_qty, pnl)
     return True

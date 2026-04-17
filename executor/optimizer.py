@@ -528,6 +528,28 @@ def run_walk_forward(
     # Save to Supabase
     _save_walk_forward_results(wf_result)
 
+    # Create parameter change proposal for human review
+    from param_manager import propose_params
+    propose_params(
+        proposed={
+            "breakout_lookback": best_params.breakout_lookback,
+            "rsi_min": best_params.rsi_min,
+            "rsi_max": best_params.rsi_max,
+            "volume_ratio_min": best_params.volume_ratio_min,
+            "sl_atr_mult": best_params.sl_atr_mult,
+            "tp_atr_mult": best_params.tp_atr_mult,
+            "adx_min": best_params.adx_min,
+        },
+        metrics={
+            "total_trades": wf_result.oos_total_trades,
+            "win_rate": wf_result.oos_win_rate,
+            "avg_return": wf_result.oos_avg_return,
+            "sharpe": wf_result.oos_sharpe,
+            "robustness": wf_result.robustness_score,
+        },
+        method="walk_forward",
+    )
+
     return wf_result
 
 

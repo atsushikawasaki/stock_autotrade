@@ -9,7 +9,7 @@ from supabase import create_client
 
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 from price_client import fetch_current_price
-from constants import CLAUDE_EXIT_ENABLED
+from constants import CLAUDE_EXIT_ENABLED, MAX_HOLDING_DAYS_A, MAX_HOLDING_DAYS_B, MAX_HOLDING_DAYS_C
 from claude_validator import advise_exit
 
 log = logging.getLogger("position_monitor")
@@ -55,7 +55,12 @@ def determine_exit(position: dict, current_price: float) -> tuple[str, float] | 
 
     signal = position.get("us_signals") or {}
     strategy = signal.get("strategy", "strategy_a")
-    max_days = 10 if strategy == "strategy_b" else 30
+    _MAX_DAYS = {
+        "strategy_a": MAX_HOLDING_DAYS_A,
+        "strategy_b": MAX_HOLDING_DAYS_B,
+        "strategy_c": MAX_HOLDING_DAYS_C,
+    }
+    max_days = _MAX_DAYS.get(strategy, MAX_HOLDING_DAYS_A)
 
     if check_time_expiry(position, max_days):
         return ("time_expiry", current_price)

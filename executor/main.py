@@ -50,6 +50,7 @@ from constants import NOTIFY_GRADES, CLAUDE_REVIEW_ENABLED
 from daily_reviewer import generate_daily_review
 from backtest_worker import poll_and_run as poll_backtest_queue
 from load_prices import update_daily_prices
+from param_manager import apply_approved_params
 import notifier
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -343,6 +344,12 @@ def main():
                         last_scan = now
 
                         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+                        # Apply approved parameter proposals
+                        try:
+                            apply_approved_params()
+                        except Exception as e:
+                            log.warning("Param apply failed: %s", e)
 
                         # Daily price update (once per day after market close)
                         if daily_prices_done != today_str:
