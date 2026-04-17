@@ -49,6 +49,7 @@ from market_filter import get_market_regime, get_market_state, check_entry_gate
 from constants import NOTIFY_GRADES, CLAUDE_REVIEW_ENABLED
 from daily_reviewer import generate_daily_review
 from backtest_worker import poll_and_run as poll_backtest_queue
+from load_prices import update_daily_prices
 import notifier
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -297,6 +298,7 @@ def main():
     last_scan = 0.0
     last_heartbeat = 0.0
     daily_review_done = ""  # date string to prevent duplicate reviews
+    daily_prices_done = ""  # date string to prevent duplicate price updates
 
     while True:
         try:
@@ -340,8 +342,17 @@ def main():
                         scan_signals()
                         last_scan = now
 
-                        # Daily AI review (once per day)
                         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+                        # Daily price update (once per day after market close)
+                        if daily_prices_done != today_str:
+                            try:
+                                update_daily_prices(days=5)
+                                daily_prices_done = today_str
+                            except Exception as e:
+                                log.warning("Daily price update failed: %s", e)
+
+                        # Daily AI review (once per day)
                         if CLAUDE_REVIEW_ENABLED and daily_review_done != today_str:
                             review = generate_daily_review()
                             if review:

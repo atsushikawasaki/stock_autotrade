@@ -34,6 +34,16 @@ class OrderResult:
     message: str
 
 
+@dataclass(frozen=True)
+class OrderFill:
+    """Result of waiting for an order to fill."""
+    filled: bool
+    status: str           # FILLED_ALL, CANCELLED_ALL, TIMEOUT, ERROR, etc.
+    dealt_qty: int        # actual filled quantity
+    dealt_avg_price: float  # average fill price (0 if not filled)
+    message: str
+
+
 _ctx_lock = threading.Lock()
 _shared_ctx: OpenSecTradeContext | None = None
 
@@ -198,3 +208,61 @@ def get_positions() -> list[dict]:
         return data[data["qty"] > 0].to_dict("records") if len(data) > 0 else []
 
     return _call_ctx(_do)
+
+
+def query_order_fill(order_id: str) -> OrderFill:
+    """Query current fill status of an order."""
+    def _do(ctx):
+        ret, data = ctx.order_list_query(trd_env=_TRD_ENV)
+        if ret != RET_OK:
+            return OrderFill(
+                filled=False, status="ERROR", dealt_qty=0,
+                dealt_avg_price=0, message=f"order_list_query failed: {data}",
+            )
+        matched = data[data["order_id"].astype(str) == str(order_id)]
+        if matched.empty:
+            return OrderFill(
+                filled=False, status="NOT_FOUND", dealt_qty=0,
+                dealt_avg_price=0, message=f"Order {order_id} not found",
+            )
+        row = matched.iloc[0]
+        status = str(row.get("order_status", ""))
+        dealt_qty = int(row.get("dealt_qty", 0))
+        dealt_avg_price = float(row.get("dealt_avg_price", 0))
+        filled = status == "FILLED_ALL"
+        return OrderFill(
+            filled=filled, status=status, dealt_qty=dealt_qty,
+            dealt_avg_price=dealt_avg_price, message=status,
+        )
+
+    return _call_ctx(_do)
+
+
+def wait_for_fill(order_id: str, timeout_seconds: int = 30, poll_interval: int = 3) -> OrderFill:
+    """Poll order status until filled, cancelled, or timeout.
+
+    Returns OrderFill with the final state. If still pending at timeout,
+    cancels the order and returns TIMEOUT status.
+    """
+    terminal_statuses = {"FILLED_ALL", "FILLED_PART", "CANCELLED_ALL", "DELETED", "FAILED"}
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        fill = query_order_fill(order_id)
+        if fill.status in terminal_statuses:
+            return fill
+        time.sleep(poll_interval)
+
+    # Timeout — cancel the unfilled order
+    log.warning("Order %s timed out after %ds, cancelling", order_id, timeout_seconds)
+    cancel_order(order_id)
+
+    # Final check after cancel
+    fill = query_order_fill(order_id)
+    if fill.filled:
+        return fill
+    return OrderFill(
+        filled=False, status="TIMEOUT",
+        dealt_qty=fill.dealt_qty, dealt_avg_price=fill.dealt_avg_price,
+        message=f"Order not filled within {timeout_seconds}s (last: {fill.status})",
+    )

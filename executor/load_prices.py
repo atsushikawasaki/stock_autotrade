@@ -111,6 +111,47 @@ def load_stock_prices(
     return count
 
 
+def update_daily_prices(days: int = 5) -> int:
+    """Update recent prices for all active stocks. Called from main.py after market close.
+
+    Args:
+        days: lookback days (default 5 — covers weekends/holidays).
+
+    Returns:
+        Total rows upserted.
+    """
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    data = (
+        sb.table("us_stocks")
+        .select("code")
+        .eq("is_active", True)
+        .order("code")
+        .execute()
+    )
+    symbols = [row["code"] for row in (data.data or [])]
+    if not symbols:
+        return 0
+
+    log.info("[PRICES] Updating %d stocks, %d day lookback", len(symbols), days)
+    ctx = OpenQuoteContext(host=OPEND_HOST, port=OPEND_PORT)
+    total_rows = 0
+
+    try:
+        for i, sym in enumerate(symbols, 1):
+            try:
+                count = load_stock_prices(ctx, sb, sym, days)
+                total_rows += count
+            except Exception as e:
+                log.warning("  %s: %s", sym, e)
+            if i < len(symbols):
+                time.sleep(0.5)
+    finally:
+        ctx.close()
+
+    log.info("[PRICES] Done. %d rows updated for %d stocks", total_rows, len(symbols))
+    return total_rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Load US stock prices into Supabase")
     parser.add_argument("--symbol", type=str, help="Single stock symbol (e.g. AAPL)")

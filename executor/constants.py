@@ -45,6 +45,9 @@ MAX_HOLDING_DAYS_C = 30
 TP_ATR_MULTIPLIER_BULL = 3.5
 SL_ATR_MULTIPLIER_BEAR = 1.5
 
+# ─── Order Price Validation ──────────────────────────────────────────────────
+MAX_ENTRY_PRICE_DEVIATION_PCT = 5.0   # reject if entry vs market price deviates > 5%
+
 # ─── Signal Scoring Thresholds ───────────────────────────────────────────────
 SCORE_A_GRADE_A_MIN = 75
 SCORE_A_GRADE_B_MIN = 65

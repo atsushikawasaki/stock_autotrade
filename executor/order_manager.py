@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from datetime import datetime, timezone
 
 from supabase import create_client
@@ -18,14 +19,21 @@ from moomoo_client import (
     place_limit_buy,
     place_limit_sell,
     place_market_sell,
+    wait_for_fill,
+    cancel_order,
     OrderResult,
 )
 import notifier
 import risk_manager
-from constants import CLAUDE_ENABLED, MIN_TRADE_GRADE
+from constants import CLAUDE_ENABLED, MIN_TRADE_GRADE, MAX_ENTRY_PRICE_DEVIATION_PCT
 from claude_validator import validate_entry
+from price_client import fetch_current_price
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+# Track exit failures to avoid spamming the same error every poll cycle
+_exit_fail_cooldown: dict[str, float] = {}  # position_id -> next_retry_timestamp
+_EXIT_COOLDOWN_SECONDS = 300  # 5 min between retries
 
 
 def fetch_pending_signals() -> list[dict]:
@@ -113,39 +121,73 @@ def execute_signal(signal: dict) -> bool:
         sb.table("us_signals").update({"status": "cancelled"}).eq("id", signal_id).execute()
         return False
 
+    # Price deviation check — reject if entry price is too far from market
+    market_price = fetch_current_price(stock_code)
+    if market_price is not None:
+        deviation_pct = abs(entry_price - market_price) / market_price * 100
+        if deviation_pct > MAX_ENTRY_PRICE_DEVIATION_PCT:
+            msg = (
+                f"Entry ${entry_price:.2f} deviates {deviation_pct:.1f}% "
+                f"from market ${market_price:.2f} (max {MAX_ENTRY_PRICE_DEVIATION_PCT}%)"
+            )
+            print(f"[PRICE] {stock_code}: {msg}")
+            sb.table("us_signals").update({
+                "status": "failed",
+                "reason": f"Price deviation: {msg}",
+            }).eq("id", signal_id).execute()
+            return False
+
     # Place buy order
     result = place_limit_buy(stock_code, entry_price, qty)
     if not result.success:
         print(f"[FAIL] {stock_code} buy order failed: {result.message}")
+        sb.table("us_signals").update({
+            "status": "failed",
+            "reason": f"Order failed: {result.message}",
+        }).eq("id", signal_id).execute()
         notifier.notify_order_failed(stock_code, signal.get("strategy", ""), result.message)
         return False
 
+    # Wait for fill confirmation
+    fill = wait_for_fill(result.order_id, timeout_seconds=30)
+    if not fill.filled:
+        print(f"[NOFILL] {stock_code} order {result.order_id} not filled: {fill.message}")
+        sb.table("us_signals").update({
+            "status": "failed",
+            "reason": f"Not filled: {fill.message}",
+            "moomoo_order_id": result.order_id,
+        }).eq("id", signal_id).execute()
+        return False
+
+    # Use actual fill price and quantity
+    fill_price = fill.dealt_avg_price if fill.dealt_avg_price > 0 else entry_price
+    fill_qty = fill.dealt_qty if fill.dealt_qty > 0 else qty
     now = datetime.now(timezone.utc).isoformat()
 
     # Update signal status
     sb.table("us_signals").update({
         "status": "executed",
-        "executed_price": entry_price,
-        "executed_qty": qty,
+        "executed_price": fill_price,
+        "executed_qty": fill_qty,
         "executed_at": now,
         "moomoo_order_id": result.order_id,
     }).eq("id", signal_id).execute()
 
-    # Create position record
+    # Create position record with actual fill price
     sb.table("us_positions").insert({
         "signal_id": signal_id,
         "stock_code": stock_code,
-        "entry_price": entry_price,
-        "quantity": qty,
+        "entry_price": fill_price,
+        "quantity": fill_qty,
         "stop_loss": signal.get("stop_loss"),
         "take_profit": signal.get("take_profit"),
         "status": "open",
         "moomoo_order_ids": [result.order_id],
     }).execute()
 
-    print(f"[BUY] {stock_code} x{qty} @ ${entry_price:.2f} (order: {result.order_id})")
+    print(f"[BUY] {stock_code} x{fill_qty} @ ${fill_price:.2f} (order: {result.order_id})")
     notifier.notify_order_executed(
-        stock_code, signal.get("strategy", ""), qty, entry_price, result.order_id or "",
+        stock_code, signal.get("strategy", ""), fill_qty, fill_price, result.order_id or "",
     )
     return True
 
@@ -157,6 +199,11 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
     position_id = position["id"]
     signal_id = position["signal_id"]
 
+    # Skip if in cooldown from a recent failure
+    cooldown_until = _exit_fail_cooldown.get(position_id, 0)
+    if time.time() < cooldown_until:
+        return False
+
     # Place sell order
     if exit_reason in ("stop_loss", "time_expiry"):
         result = place_market_sell(stock_code, qty)
@@ -165,6 +212,7 @@ def execute_exit(position: dict, exit_reason: str, exit_price: float) -> bool:
 
     if not result.success:
         print(f"[FAIL] {stock_code} sell failed: {result.message}")
+        _exit_fail_cooldown[position_id] = time.time() + _EXIT_COOLDOWN_SECONDS
         notifier.notify_order_failed(stock_code, "exit", result.message)
         return False
 
