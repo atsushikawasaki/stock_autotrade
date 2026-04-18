@@ -23,6 +23,7 @@ MIN_TRADE_GRADE = "B"  # Execute A and B grade signals
 STRATEGY_A_ENABLED = True
 STRATEGY_B_ENABLED = False  # disabled: net negative at small position sizes
 STRATEGY_C_ENABLED = True
+STRATEGY_D_ENABLED = True
 
 # ─── Strategy C (SMA Golden Cross Momentum) ──────────────────────────────────
 STRATEGY_C_ADX_MIN = 20
@@ -41,6 +42,7 @@ MAX_HOLDING_DAYS_B_BULL = 20
 STRATEGY_B_SL_ATR_MULT = 2.0          # moderate SL for reversal trades
 STRATEGY_B_TP_ATR_MULT = 3.0          # wide TP — let winners run
 MAX_HOLDING_DAYS_C = 30
+MAX_HOLDING_DAYS_D = 15
 
 TP_ATR_MULTIPLIER_BULL = 3.5
 SL_ATR_MULTIPLIER_BEAR = 1.5
@@ -71,6 +73,10 @@ SCORE_C_GRADE_A_MIN = 70
 SCORE_C_GRADE_B_MIN = 60
 SCORE_C_GRADE_C_MIN = 50
 
+SCORE_D_GRADE_A_MIN = 75
+SCORE_D_GRADE_B_MIN = 60
+SCORE_D_GRADE_C_MIN = 50
+
 # ─── Volume / Ichimoku Penalties ─────────────────────────────────────────────
 STRATEGY_B_LOW_VOL_THRESHOLD = 0.8
 STRATEGY_B_LOW_VOL_PENALTY = -8
@@ -95,6 +101,16 @@ MARKET_GATE_STRATEGY_A_CAUTION = "grade_a_only"
 MARKET_GATE_STRATEGY_B_BEAR = "allow"       # reversal strategy can work in bear
 MARKET_GATE_STRATEGY_C_BEAR = "block"
 MARKET_GATE_STRATEGY_C_CAUTION = "grade_a_only"
+MARKET_GATE_STRATEGY_D_BEAR = "grade_a_only"
+MARKET_GATE_STRATEGY_D_CAUTION = "allow"
+
+# ─── Strategy D (Catalyst-Driven) ────────────────────────────────────────────
+STRATEGY_D_SCORE_THRESHOLD = 20       # low bar: backtest shows 30-50% win rate
+STRATEGY_D_SL_ATR_MULT = 2.5          # wider SL avoids noise stop-outs (backtest)
+STRATEGY_D_TP_ATR_MULT = 4.0          # wide TP lets winners run
+STRATEGY_D_POSITION_SCALE = 0.7       # 70% of normal size (no technical confirm)
+STRATEGY_D_INSIDER_LOOKBACK_DAYS = 7  # Form 4 filings within this window
+STRATEGY_D_EARNINGS_NEAR_DAYS = 10    # recent earnings beat within N days
 
 # ─── Claude AI ────────────────────────────────────────────────────────────────
 CLAUDE_ENABLED = True              # Entry validation gate

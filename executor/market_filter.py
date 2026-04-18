@@ -29,6 +29,8 @@ from constants import (
     MARKET_GATE_STRATEGY_B_BEAR,
     MARKET_GATE_STRATEGY_C_BEAR,
     MARKET_GATE_STRATEGY_C_CAUTION,
+    MARKET_GATE_STRATEGY_D_BEAR,
+    MARKET_GATE_STRATEGY_D_CAUTION,
 )
 
 log = logging.getLogger("market_filter")
@@ -216,6 +218,8 @@ def _get_gate_rule(strategy: str, regime: MarketRegime) -> str:
         ("strategy_b", "caution"): "allow",  # reversal strategy OK in caution
         ("strategy_c", "bear"): MARKET_GATE_STRATEGY_C_BEAR,
         ("strategy_c", "caution"): MARKET_GATE_STRATEGY_C_CAUTION,
+        ("strategy_d", "bear"): MARKET_GATE_STRATEGY_D_BEAR,
+        ("strategy_d", "caution"): MARKET_GATE_STRATEGY_D_CAUTION,
     }
     return gate_map.get((strategy, regime), "allow")
 

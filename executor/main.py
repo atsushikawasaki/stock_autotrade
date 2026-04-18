@@ -46,17 +46,19 @@ from position_monitor import get_current_price, determine_exit
 from price_client import fetch_daily_prices
 from strategies import evaluate_all_strategies
 from market_filter import get_market_regime, get_market_state, check_entry_gate
-from constants import NOTIFY_GRADES, CLAUDE_REVIEW_ENABLED
+from constants import NOTIFY_GRADES, CLAUDE_REVIEW_ENABLED, STRATEGY_D_ENABLED
 from daily_reviewer import generate_daily_review
 from backtest_worker import poll_and_run as poll_backtest_queue
 from load_prices import update_daily_prices
 from param_manager import apply_approved_params
+from catalyst_scanner import run_catalyst_scan
 import notifier
 
 sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 SCAN_INTERVAL_SECONDS = 300  # Signal scan every 5 min during market hours
 HEARTBEAT_INTERVAL_SECONDS = 300  # Health check every 5 min
+CATALYST_SCAN_INTERVAL = 1800  # Catalyst scan every 30 min
 
 log = logging.getLogger("executor")
 
@@ -218,6 +220,74 @@ def scan_signals() -> int:
     return signals_found
 
 
+def scan_catalysts() -> int:
+    """
+    Run catalyst-driven scan (Strategy D) on active stocks.
+    Returns count of new signals found.
+    """
+    if not STRATEGY_D_ENABLED:
+        return 0
+
+    stocks = fetch_active_stocks()
+    if not stocks:
+        return 0
+
+    market_state = get_market_state()
+    symbols = [s["code"] for s in stocks]
+
+    signals = run_catalyst_scan(symbols)
+    if not signals:
+        return 0
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    saved = 0
+
+    for sig in signals:
+        # Entry gate check
+        gate = check_entry_gate(sig.strategy, sig.grade, market_state)
+        if not gate.allowed:
+            log.info("[CATALYST-GATE] %s grade:%s — %s", sig.stock_code, sig.grade, gate.reason)
+            continue
+
+        row = {
+            "stock_code": sig.stock_code,
+            "signal_date": today,
+            "strategy": sig.strategy,
+            "direction": "buy",
+            "score": sig.score,
+            "grade": sig.grade,
+            "entry_price": sig.entry_price,
+            "stop_loss": sig.stop_loss,
+            "take_profit": sig.take_profit,
+            "indicators": sig.indicators,
+            "reason": sig.reason,
+            "status": "pending",
+        }
+
+        sb.table("us_signals").upsert(
+            row,
+            on_conflict="stock_code,signal_date,strategy",
+        ).execute()
+
+        saved += 1
+        log.info(
+            "[CATALYST] %s grade:%s score:%d — %s",
+            sig.stock_code, sig.grade, sig.score, sig.reason,
+        )
+
+        if sig.grade in NOTIFY_GRADES:
+            notifier.buffer_signal(
+                sig.stock_code, sig.strategy, sig.grade, sig.score,
+                sig.entry_price, sig.stop_loss, sig.take_profit, sig.reason,
+            )
+
+    if saved > 0:
+        notifier.flush_signals()
+        log.info("[CATALYST] Scan complete — %d signal(s)", saved)
+
+    return saved
+
+
 def process_pending_signals() -> int:
     """Execute all pending buy signals. Returns count of executed."""
     signals = fetch_pending_signals()
@@ -298,6 +368,7 @@ def main():
 
     last_scan = 0.0
     last_heartbeat = 0.0
+    last_catalyst_scan = 0.0
     daily_review_done = ""  # date string to prevent duplicate reviews
     daily_prices_done = ""  # date string to prevent duplicate price updates
 
@@ -323,6 +394,16 @@ def main():
                 if now - last_scan >= SCAN_INTERVAL_SECONDS:
                     scan_signals()
                     last_scan = now
+
+                # Catalyst scan — Strategy D (every CATALYST_SCAN_INTERVAL)
+                if now - last_catalyst_scan >= CATALYST_SCAN_INTERVAL:
+                    try:
+                        n_cat = scan_catalysts()
+                        if n_cat > 0:
+                            log.info("Catalyst scan: %d signal(s)", n_cat)
+                    except Exception as e:
+                        log.warning("Catalyst scan error: %s", e)
+                    last_catalyst_scan = now
 
                 # Execute pending signals
                 n_exec = process_pending_signals()

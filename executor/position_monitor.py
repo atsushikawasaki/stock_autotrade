@@ -14,6 +14,7 @@ from constants import (
     MAX_HOLDING_DAYS_A,
     MAX_HOLDING_DAYS_B,
     MAX_HOLDING_DAYS_C,
+    MAX_HOLDING_DAYS_D,
     SERVER_SIDE_EXITS_ENABLED,
 )
 from claude_validator import advise_exit
@@ -117,6 +118,7 @@ def determine_exit(position: dict, current_price: float) -> tuple[str, float] | 
         "strategy_a": MAX_HOLDING_DAYS_A,
         "strategy_b": MAX_HOLDING_DAYS_B,
         "strategy_c": MAX_HOLDING_DAYS_C,
+        "strategy_d": MAX_HOLDING_DAYS_D,
     }
     max_days = _MAX_DAYS.get(strategy, MAX_HOLDING_DAYS_A)
 

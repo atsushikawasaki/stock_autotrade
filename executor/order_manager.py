@@ -150,6 +150,12 @@ def execute_signal(signal: dict) -> bool:
         atr = float(atr)
 
     qty = calc_position_size(entry_price, balance, atr=atr)
+
+    # Strategy D: reduced position size (no technical confirmation)
+    from constants import STRATEGY_D_POSITION_SCALE
+    if signal.get("strategy") == "strategy_d":
+        qty = max(1, math.floor(qty * STRATEGY_D_POSITION_SCALE))
+
     if qty <= 0:
         print(f"[SKIP] {stock_code}: insufficient balance (${balance})")
         sb.table("us_signals").update({"status": "cancelled"}).eq("id", signal_id).execute()
