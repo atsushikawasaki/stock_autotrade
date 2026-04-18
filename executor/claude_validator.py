@@ -268,13 +268,6 @@ def validate_entry(signal: dict) -> ValidationResult:
     Fail-closed: returns approved=False on API/parse errors to avoid risky entries.
     Skips AI call for Grade A + high score signals to conserve API budget.
     """
-    # Skip AI for high-confidence Grade A signals (save budget)
-    grade = signal.get("grade", "D")
-    score = signal.get("score", 0)
-    if grade == "A" and score >= 80:
-        log.info("[AI] %s: Grade A score %d — auto-approved (budget save)", signal.get("stock_code"), score)
-        return ValidationResult(approved=True, confidence=85, reasoning="auto_approved_high_score")
-
     client = _get_client()
     if client is None:
         log.info("[AI] No Gemini API key — skipping entry validation")
