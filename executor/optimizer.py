@@ -124,21 +124,50 @@ def _calc_score(win_rate: float, avg_return: float, sharpe: float | None, total_
 
 
 def _fetch_sample_stocks(n: int = 20) -> list[str]:
-    """Fetch top N active stocks for optimization (by backtest trade count)."""
-    result = (
-        sb.table("us_backtest_results")
-        .select("stock_code")
-        .eq("strategy", "strategy_a")
-        .order("total_trades", desc=True)
-        .limit(n)
+    """Fetch N active stocks stratified by sector for unbiased optimization.
+
+    Picks evenly across sectors to avoid sector bias in parameter selection.
+    """
+    data = (
+        sb.table("us_stocks")
+        .select("code, sector")
+        .eq("is_active", True)
+        .order("code")
         .execute()
     )
-    codes = list({r["stock_code"] for r in (result.data or [])})
-    if not codes:
-        # Fallback: use active us_stocks
-        data = sb.table("us_stocks").select("code").eq("is_active", True).limit(n).execute()
-        codes = [r["code"] for r in (data.data or [])]
-    return codes
+    stocks = data.data or []
+    if not stocks:
+        return []
+
+    # Group by sector
+    by_sector: dict[str, list[str]] = {}
+    for row in stocks:
+        sector = row.get("sector") or "Unknown"
+        by_sector.setdefault(sector, []).append(row["code"])
+
+    # Round-robin pick from each sector
+    import itertools
+    import random
+    random.seed(42)
+
+    # Shuffle within each sector for variety
+    for codes in by_sector.values():
+        random.shuffle(codes)
+
+    selected: list[str] = []
+    iters = [iter(codes) for codes in by_sector.values()]
+    for it in itertools.cycle(iters):
+        if len(selected) >= n:
+            break
+        try:
+            code = next(it)
+            selected.append(code)
+        except StopIteration:
+            iters.remove(it)
+            if not iters:
+                break
+
+    return selected
 
 
 def _generate_combos(grid: dict, max_combos: int) -> list[dict]:
@@ -221,6 +250,67 @@ def _calc_robustness(train_avg: float, test_avg: float) -> float:
     """Robustness score: 0~1. Higher = train and test performance are closer."""
     denom = max(abs(train_avg), 1.0)
     return round(max(0.0, 1.0 - abs(train_avg - test_avg) / denom), 4)
+
+
+def monte_carlo_confidence(
+    trade_returns: list[float],
+    n_simulations: int = 1000,
+    confidence_level: float = 0.95,
+) -> dict:
+    """Bootstrap Monte Carlo to estimate confidence intervals on Sharpe and avg return.
+
+    Resamples trades with replacement to produce a distribution of outcomes.
+    Returns dict with median, lower/upper bounds, and probability of Sharpe > 1.0.
+    """
+    import random
+    random.seed(42)
+
+    if len(trade_returns) < 10:
+        return {
+            "n_trades": len(trade_returns),
+            "simulations": 0,
+            "sharpe_median": None,
+            "sharpe_lower": None,
+            "sharpe_upper": None,
+            "avg_return_median": None,
+            "prob_sharpe_above_1": 0.0,
+            "confidence_level": confidence_level,
+        }
+
+    n = len(trade_returns)
+    sharpes: list[float] = []
+    avg_returns: list[float] = []
+
+    for _ in range(n_simulations):
+        sample = random.choices(trade_returns, k=n)
+        mean = sum(sample) / n
+        var = sum((r - mean) ** 2 for r in sample) / (n - 1)
+        std = math.sqrt(var) if var > 0 else 0.001
+        sharpe = (mean / std) * math.sqrt(252)
+        sharpes.append(sharpe)
+        avg_returns.append(mean)
+
+    sharpes.sort()
+    avg_returns.sort()
+
+    lower_idx = int((1 - confidence_level) / 2 * n_simulations)
+    upper_idx = int((1 + confidence_level) / 2 * n_simulations)
+    median_idx = n_simulations // 2
+
+    prob_sharpe_above_1 = sum(1 for s in sharpes if s >= 1.0) / n_simulations
+
+    return {
+        "n_trades": n,
+        "simulations": n_simulations,
+        "sharpe_median": round(sharpes[median_idx], 3),
+        "sharpe_lower": round(sharpes[lower_idx], 3),
+        "sharpe_upper": round(sharpes[upper_idx], 3),
+        "avg_return_median": round(avg_returns[median_idx], 3),
+        "avg_return_lower": round(avg_returns[lower_idx], 3),
+        "avg_return_upper": round(avg_returns[upper_idx], 3),
+        "prob_sharpe_above_1": round(prob_sharpe_above_1, 3),
+        "confidence_level": confidence_level,
+    }
 
 
 def _calc_oos_sharpe(returns: list[float]) -> float | None:
@@ -525,6 +615,20 @@ def run_walk_forward(
             w.train_params.volume_ratio_min,
         )
 
+    # Monte Carlo confidence validation
+    mc_result = monte_carlo_confidence(oos_returns, n_simulations=1000)
+    log.info(
+        "[WF] Monte Carlo (1000 sims): Sharpe %.3f [%.3f, %.3f], "
+        "Avg return %.3f%% [%.3f, %.3f], P(Sharpe>1)=%.1f%%",
+        mc_result.get("sharpe_median") or 0,
+        mc_result.get("sharpe_lower") or 0,
+        mc_result.get("sharpe_upper") or 0,
+        mc_result.get("avg_return_median") or 0,
+        mc_result.get("avg_return_lower") or 0,
+        mc_result.get("avg_return_upper") or 0,
+        (mc_result.get("prob_sharpe_above_1") or 0) * 100,
+    )
+
     # Save to Supabase
     _save_walk_forward_results(wf_result)
 
@@ -546,6 +650,7 @@ def run_walk_forward(
             "avg_return": wf_result.oos_avg_return,
             "sharpe": wf_result.oos_sharpe,
             "robustness": wf_result.robustness_score,
+            "monte_carlo": mc_result,
         },
         method="walk_forward",
     )

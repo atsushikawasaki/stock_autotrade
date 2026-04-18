@@ -51,6 +51,10 @@ TRAILING_STOP_PCT = 5.0               # 5% below peak
 # Enable server-side SL/TP/trailing orders on moomoo (vs. polling-based exits)
 SERVER_SIDE_EXITS_ENABLED = True
 
+# ─── Backtest Simulation Costs ───────────────────────────────────────────────
+BACKTEST_SLIPPAGE_PCT = 0.05          # 0.05% slippage per fill
+BACKTEST_COMMISSION_PCT = 0.05        # 0.05% commission per fill (0.1% round-trip)
+
 # ─── Order Price Validation ──────────────────────────────────────────────────
 MAX_ENTRY_PRICE_DEVIATION_PCT = 5.0   # reject if entry vs market price deviates > 5%
 

@@ -80,11 +80,29 @@ def count_open_positions() -> int:
     return result.count or 0
 
 
-def calc_position_size(entry_price: float, balance: float | None) -> int:
-    """Calculate number of shares based on max position % of account."""
+def calc_position_size(
+    entry_price: float,
+    balance: float | None,
+    atr: float | None = None,
+) -> int:
+    """Calculate number of shares based on max position % of account,
+    adjusted for volatility (ATR-based sizing).
+
+    Higher volatility -> smaller position to normalize risk across holdings.
+    """
     if balance is None or balance <= 0:
         return 0
     max_dollar = balance * (MAX_POSITION_PCT / 100)
+
+    # Volatility adjustment: scale down position for high-ATR stocks
+    if atr is not None and atr > 0 and entry_price > 0:
+        volatility_pct = (atr / entry_price) * 100  # daily volatility as %
+        # Target ~1.5% daily vol per position; scale inversely above that
+        target_vol_pct = 1.5
+        if volatility_pct > target_vol_pct:
+            vol_scale = target_vol_pct / volatility_pct
+            max_dollar *= vol_scale
+
     shares = math.floor(max_dollar / entry_price)
     return max(shares, 1) if shares > 0 else 0
 
@@ -125,7 +143,13 @@ def execute_signal(signal: dict) -> bool:
         print(f"[RISK] {stock_code}: {risk.reason}")
         sb.table("us_signals").update({"status": "cancelled"}).eq("id", signal_id).execute()
         return False
-    qty = calc_position_size(entry_price, balance)
+    # Extract ATR from signal indicators for volatility-adjusted sizing
+    indicators = signal.get("indicators") or {}
+    atr = indicators.get("atr")
+    if atr is not None:
+        atr = float(atr)
+
+    qty = calc_position_size(entry_price, balance, atr=atr)
     if qty <= 0:
         print(f"[SKIP] {stock_code}: insufficient balance (${balance})")
         sb.table("us_signals").update({"status": "cancelled"}).eq("id", signal_id).execute()

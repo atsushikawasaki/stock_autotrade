@@ -31,6 +31,7 @@ from market_filter import get_market_regime
 from constants import (
     MAX_HOLDING_DAYS_A, MAX_HOLDING_DAYS_B, MAX_HOLDING_DAYS_C,
     MIN_TRADE_GRADE,
+    BACKTEST_SLIPPAGE_PCT, BACKTEST_COMMISSION_PCT,
 )
 
 GRADE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
@@ -78,6 +79,19 @@ def _max_holding_days(strategy: str) -> int:
     return MAX_HOLDING_DAYS_A
 
 
+def _apply_slippage(price: float, direction: str) -> float:
+    """Apply slippage to a fill price. direction: 'buy' (worse=higher) or 'sell' (worse=lower)."""
+    slip = BACKTEST_SLIPPAGE_PCT / 100
+    if direction == "buy":
+        return price * (1 + slip)
+    return price * (1 - slip)
+
+
+def _apply_round_trip_cost(return_pct: float) -> float:
+    """Deduct round-trip commission from a trade's return percentage."""
+    return return_pct - (BACKTEST_COMMISSION_PCT * 2)
+
+
 def _simulate_trade(
     signal_idx: int,
     prices: list[PriceRow],
@@ -85,28 +99,31 @@ def _simulate_trade(
     stop_loss: float | None,
     take_profit: float | None,
 ) -> tuple[int, str, float]:
-    """Simulate forward from signal day. Returns (exit_idx, exit_reason, exit_price)."""
+    """Simulate forward from signal day. Returns (exit_idx, exit_reason, exit_price).
+
+    Exit prices include slippage (sell-side) to model realistic fills.
+    """
     entry_price = prices[signal_idx].close
     max_days = _max_holding_days(strategy)
 
     for offset in range(1, max_days + 1):
         idx = signal_idx + offset
         if idx >= len(prices):
-            return len(prices) - 1, "end_of_data", prices[-1].close
+            return len(prices) - 1, "end_of_data", _apply_slippage(prices[-1].close, "sell")
 
         bar = prices[idx]
 
-        # Check SL hit (intraday low)
+        # Check SL hit (intraday low) — slippage worsens exit
         if stop_loss is not None and bar.low <= stop_loss:
-            return idx, "stop_loss", stop_loss
+            return idx, "stop_loss", _apply_slippage(stop_loss, "sell")
 
-        # Check TP hit (intraday high)
+        # Check TP hit (intraday high) — slippage worsens exit
         if take_profit is not None and bar.high >= take_profit:
-            return idx, "take_profit", take_profit
+            return idx, "take_profit", _apply_slippage(take_profit, "sell")
 
     # Time expiry
     exit_idx = min(signal_idx + max_days, len(prices) - 1)
-    return exit_idx, "time_expiry", prices[exit_idx].close
+    return exit_idx, "time_expiry", _apply_slippage(prices[exit_idx].close, "sell")
 
 
 def _calc_sharpe(returns: list[float], annual_factor: float = 252) -> float | None:
@@ -170,8 +187,9 @@ def backtest_stock(
                 i, prices, sig.strategy, sig.stop_loss, sig.take_profit,
             )
 
-            entry_price = sig.entry_price
-            return_pct = round(((exit_price - entry_price) / entry_price) * 100, 2) if entry_price > 0 else 0.0
+            entry_price = _apply_slippage(sig.entry_price, "buy")
+            raw_return = ((exit_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0.0
+            return_pct = round(_apply_round_trip_cost(raw_return), 2)
             holding = exit_idx - i
 
             trades.append(Trade(

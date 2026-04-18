@@ -26,9 +26,10 @@ sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
 def check_daily_loss(account_balance: float) -> RiskCheck:
-    """Check if today's realized losses exceed the daily limit."""
+    """Check if today's realized losses + unrealized open drawdown exceed the daily limit."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    # 1. Realized losses today
     result = (
         sb.table("us_signal_outcomes")
         .select("return_pct")
@@ -36,24 +37,58 @@ def check_daily_loss(account_balance: float) -> RiskCheck:
         .execute()
     )
     outcomes = result.data or []
-
-    if not outcomes:
-        return RiskCheck(allowed=True, reason="No exits today")
-
-    total_loss_pct = sum(
+    realized_loss_pct = sum(
         o["return_pct"] for o in outcomes if o["return_pct"] < 0
     )
+
+    # 2. Unrealized losses from open positions
+    unrealized_loss_pct = _calc_unrealized_loss_pct()
+
+    total_loss_pct = realized_loss_pct + unrealized_loss_pct
 
     if abs(total_loss_pct) >= MAX_DAILY_LOSS_PCT:
         return RiskCheck(
             allowed=False,
-            reason=f"Daily loss limit hit: {total_loss_pct:.1f}% (max: -{MAX_DAILY_LOSS_PCT}%)",
+            reason=(
+                f"Daily loss limit hit: {total_loss_pct:.1f}% "
+                f"(realized: {realized_loss_pct:.1f}%, unrealized: {unrealized_loss_pct:.1f}%, "
+                f"max: -{MAX_DAILY_LOSS_PCT}%)"
+            ),
         )
 
     return RiskCheck(
         allowed=True,
         reason=f"Daily loss: {total_loss_pct:.1f}% (limit: -{MAX_DAILY_LOSS_PCT}%)",
     )
+
+
+def _calc_unrealized_loss_pct() -> float:
+    """Sum of negative unrealized P&L % across all open positions."""
+    from price_client import fetch_current_price
+
+    positions = (
+        sb.table("us_positions")
+        .select("stock_code, entry_price, quantity")
+        .in_("status", ["open", "partial_closed"])
+        .execute()
+    )
+    open_positions = positions.data or []
+    if not open_positions:
+        return 0.0
+
+    total_loss = 0.0
+    for pos in open_positions:
+        entry = float(pos.get("entry_price", 0))
+        if entry <= 0:
+            continue
+        current = fetch_current_price(pos["stock_code"])
+        if current is None:
+            continue
+        pnl_pct = ((current - entry) / entry) * 100
+        if pnl_pct < 0:
+            total_loss += pnl_pct
+
+    return total_loss
 
 
 def check_sector_concentration(stock_code: str) -> RiskCheck:

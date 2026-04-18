@@ -55,6 +55,44 @@ class ExitAdvice:
 # Stock context via yfinance
 # ---------------------------------------------------------------------------
 
+_SECTOR_ETF_MAP = {
+    "Technology": "XLK", "Healthcare": "XLV", "Financial Services": "XLF",
+    "Consumer Cyclical": "XLY", "Consumer Defensive": "XLP",
+    "Industrials": "XLI", "Energy": "XLE", "Utilities": "XLU",
+    "Real Estate": "XLRE", "Basic Materials": "XLB",
+    "Communication Services": "XLC",
+}
+
+
+def _fetch_sector_trend(symbol: str) -> dict:
+    """Fetch the sector ETF's short-term trend for cross-validation."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info or {}
+        sector = info.get("sector", "")
+        etf_symbol = _SECTOR_ETF_MAP.get(sector)
+        if not etf_symbol:
+            return {"sector": sector, "sector_etf": None, "sector_trend": "unknown"}
+
+        etf = yf.Ticker(etf_symbol)
+        hist = etf.history(period="10d")
+        if hist is None or len(hist) < 5:
+            return {"sector": sector, "sector_etf": etf_symbol, "sector_trend": "insufficient_data"}
+
+        closes = hist["Close"].tolist()
+        sma5 = sum(closes[-5:]) / 5
+        trend = "bullish" if closes[-1] > sma5 else "bearish"
+        change_5d = ((closes[-1] - closes[0]) / closes[0]) * 100
+        return {
+            "sector": sector,
+            "sector_etf": etf_symbol,
+            "sector_trend": trend,
+            "sector_5d_change_pct": round(change_5d, 2),
+        }
+    except Exception:
+        return {"sector": "", "sector_etf": None, "sector_trend": "unknown"}
+
+
 def _fetch_stock_context(symbol: str) -> dict:
     """Fetch recent news headlines, next earnings date, and EPS estimates."""
     ctx: dict = {
@@ -131,6 +169,9 @@ recommend caution or rejection.
 (lawsuit, downgrade, SEC investigation, guidance cut).
 4. Risk/reward: Is the stop-loss too tight or take-profit unrealistic \
 given the ATR and volatility?
+5. Sector alignment: If the sector ETF trend is bearish while the stock signal \
+is bullish, consider rejection or lower confidence. A stock fighting its sector \
+headwind has lower odds.
 
 Respond with ONLY a JSON object (no markdown, no explanation outside JSON):
 {{"approved": true/false, "confidence": 0-100, "reasoning": "brief explanation"}}
@@ -158,7 +199,7 @@ def validate_entry(signal: dict) -> ValidationResult:
     """
     Validate a buy signal using Claude AI.
 
-    Fail-open: returns approved=True on any API error so existing logic proceeds.
+    Fail-closed: returns approved=False on API/parse errors to avoid risky entries.
     """
     client = _get_client()
     if client is None:
@@ -167,6 +208,8 @@ def validate_entry(signal: dict) -> ValidationResult:
 
     symbol = signal.get("stock_code", "")
     context = _fetch_stock_context(symbol)
+    sector_ctx = _fetch_sector_trend(symbol)
+    context.update(sector_ctx)
 
     try:
         response = client.messages.create(
@@ -208,11 +251,11 @@ def validate_entry(signal: dict) -> ValidationResult:
         )
 
     except (APIError, APITimeoutError) as e:
-        log.warning("[CLAUDE] API error for %s — fail-open: %s", symbol, e)
-        return ValidationResult(approved=True, confidence=0, reasoning=f"api_error: {e}")
+        log.warning("[CLAUDE] API error for %s — fail-closed (rejected): %s", symbol, e)
+        return ValidationResult(approved=False, confidence=0, reasoning=f"api_error: {e}")
     except (json.JSONDecodeError, KeyError, IndexError) as e:
-        log.warning("[CLAUDE] Parse error for %s — fail-open: %s", symbol, e)
-        return ValidationResult(approved=True, confidence=0, reasoning=f"parse_error: {e}")
+        log.warning("[CLAUDE] Parse error for %s — fail-closed (rejected): %s", symbol, e)
+        return ValidationResult(approved=False, confidence=0, reasoning=f"parse_error: {e}")
 
 
 # ---------------------------------------------------------------------------

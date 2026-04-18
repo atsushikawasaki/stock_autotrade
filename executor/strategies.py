@@ -128,13 +128,27 @@ def evaluate_strategy_a(prices: list[PriceRow]) -> StrategyAResult:
     new_high = closes[last] > prev_high
     breakout_pct = ((closes[last] - prev_high) / prev_high) * 100 if prev_high > 0 else None
 
+    # Clean breakout filter: reject if recent bars (last 3) already touched resistance
+    # (avoids false breakouts from repeated tests of the same level)
+    if new_high and last >= 4:
+        recent_touches = sum(
+            1 for i in range(last - 3, last)
+            if highs[i] >= prev_high * 0.995  # within 0.5% of the high
+        )
+        if recent_touches >= 2:
+            new_high = False  # not a clean breakout
+
     # 2. Above SMA50 (medium-term uptrend)
     above_sma50 = sma50[last] is not None and closes[last] > sma50[last]
 
-    # 3. Volume surge on breakout day
-    vol_ratio = (
-        (volumes[last] / vol_sma20[last]) if vol_sma20[last] and vol_sma20[last] > 0 else None
-    )
+    # 3. Volume surge: average of last 2 days must exceed threshold
+    #    (prevents single-day spikes with no follow-through)
+    if vol_sma20[last] and vol_sma20[last] > 0:
+        vol_today = volumes[last] / vol_sma20[last]
+        vol_prev = (volumes[last - 1] / vol_sma20[last - 1]) if vol_sma20[last - 1] and vol_sma20[last - 1] > 0 else vol_today
+        vol_ratio = (vol_today + vol_prev) / 2
+    else:
+        vol_ratio = None
     volume_surge = vol_ratio is not None and vol_ratio >= STRATEGY_A_VOLUME_RATIO_MIN
 
     # 4. MACD histogram positive (momentum confirmation)
