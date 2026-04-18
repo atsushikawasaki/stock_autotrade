@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 
 import yfinance as yf
@@ -20,6 +21,70 @@ from constants import (
 log = logging.getLogger("ai_validator")
 
 _client = None
+
+# ─── Rate Limiting ───────────────────────────────────────────────────────────
+# Gemini 2.5 Flash free tier: 10 RPM, 500 RPD
+_DAILY_BUDGET = 400         # leave 100 buffer below 500 RPD limit
+_RPM_LIMIT = 8              # leave 2 buffer below 10 RPM
+_EXIT_COOLDOWN_SECONDS = 3600  # exit advisor: 1 call per position per hour
+
+_daily_call_count = 0
+_daily_reset_date = ""
+_minute_calls: list[float] = []  # timestamps of calls in the last minute
+_exit_last_call: dict[str, float] = {}  # position_id -> last call timestamp
+
+
+def _check_budget() -> bool:
+    """Check if we have API budget remaining. Returns True if call is allowed."""
+    global _daily_call_count, _daily_reset_date
+
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Reset daily counter at midnight
+    if _daily_reset_date != today:
+        _daily_reset_date = today
+        _daily_call_count = 0
+
+    # Daily limit
+    if _daily_call_count >= _DAILY_BUDGET:
+        return False
+
+    # Per-minute limit
+    now = time.time()
+    cutoff = now - 60
+    _minute_calls[:] = [t for t in _minute_calls if t > cutoff]
+    if len(_minute_calls) >= _RPM_LIMIT:
+        return False
+
+    return True
+
+
+def _record_call() -> None:
+    """Record that an API call was made."""
+    global _daily_call_count
+    _daily_call_count += 1
+    _minute_calls.append(time.time())
+
+
+def _check_exit_cooldown(position_id: str) -> bool:
+    """Check if exit advisor is allowed for this position (once per hour)."""
+    last = _exit_last_call.get(position_id, 0)
+    return time.time() - last >= _EXIT_COOLDOWN_SECONDS
+
+
+def _record_exit_call(position_id: str) -> None:
+    """Record exit advisor call for cooldown tracking."""
+    _exit_last_call[position_id] = time.time()
+
+
+def get_api_usage() -> dict:
+    """Return current API usage stats (for monitoring)."""
+    return {
+        "daily_calls": _daily_call_count,
+        "daily_budget": _DAILY_BUDGET,
+        "remaining": _DAILY_BUDGET - _daily_call_count,
+    }
 
 
 def _get_client():
@@ -201,11 +266,24 @@ def validate_entry(signal: dict) -> ValidationResult:
     Validate a buy signal using Gemini AI.
 
     Fail-closed: returns approved=False on API/parse errors to avoid risky entries.
+    Skips AI call for Grade A + high score signals to conserve API budget.
     """
+    # Skip AI for high-confidence Grade A signals (save budget)
+    grade = signal.get("grade", "D")
+    score = signal.get("score", 0)
+    if grade == "A" and score >= 80:
+        log.info("[AI] %s: Grade A score %d — auto-approved (budget save)", signal.get("stock_code"), score)
+        return ValidationResult(approved=True, confidence=85, reasoning="auto_approved_high_score")
+
     client = _get_client()
     if client is None:
         log.info("[AI] No Gemini API key — skipping entry validation")
         return ValidationResult(approved=True, confidence=0, reasoning="no_api_key")
+
+    # Check API budget
+    if not _check_budget():
+        log.warning("[AI] Daily API budget exhausted (%d/%d) — auto-approving", _daily_call_count, _DAILY_BUDGET)
+        return ValidationResult(approved=True, confidence=0, reasoning="budget_exhausted")
 
     symbol = signal.get("stock_code", "")
     context = _fetch_stock_context(symbol)
@@ -222,6 +300,7 @@ def validate_entry(signal: dict) -> ValidationResult:
             },
         )
 
+        _record_call()
         text = response.text.strip()
         parsed = json.loads(text)
 
@@ -312,11 +391,23 @@ def advise_exit(position: dict, current_price: float) -> ExitAdvice:
     """
     Get Gemini's advice on whether to exit a position.
 
+    Rate-limited: one call per position per hour. Skips if daily budget exhausted.
     Fail-open: returns should_exit=False on any API error (defer to existing logic).
     """
+    position_id = str(position.get("id", ""))
+
+    # Per-position cooldown (1 hour)
+    if not _check_exit_cooldown(position_id):
+        return ExitAdvice(should_exit=False, reasoning="cooldown", suggested_action="hold")
+
     client = _get_client()
     if client is None:
         return ExitAdvice(should_exit=False, reasoning="no_api_key", suggested_action="hold")
+
+    # Check API budget
+    if not _check_budget():
+        log.info("[AI-EXIT] Budget exhausted — skipping")
+        return ExitAdvice(should_exit=False, reasoning="budget_exhausted", suggested_action="hold")
 
     symbol = position.get("stock_code", "")
 
@@ -330,6 +421,8 @@ def advise_exit(position: dict, current_price: float) -> ExitAdvice:
             },
         )
 
+        _record_call()
+        _record_exit_call(position_id)
         text = response.text.strip()
         parsed = json.loads(text)
 
