@@ -100,9 +100,9 @@ MARKET_GATE_STRATEGY_C_CAUTION = "grade_a_only"
 CLAUDE_ENABLED = True              # Entry validation gate
 CLAUDE_EXIT_ENABLED = True         # Exit advisor
 CLAUDE_REVIEW_ENABLED = True       # Daily trade review
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+GEMINI_MODEL = "gemini-2.0-flash"  # Free tier: 15 RPM, 1500 RPD
 CLAUDE_MIN_CONFIDENCE = 60         # Minimum confidence to approve entry
-CLAUDE_TIMEOUT_SECONDS = 15
+GEMINI_TIMEOUT_SECONDS = 15
 CLAUDE_EARNINGS_BLACKOUT_DAYS = 5  # Caution zone around earnings
 
 # ─── Notification ─────────────────────────────────────────────────────────────

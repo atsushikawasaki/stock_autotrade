@@ -1,4 +1,4 @@
-"""Claude AI validation gate for entry signals and exit advice."""
+"""AI validation gate for entry signals and exit advice (Google Gemini)."""
 
 from __future__ import annotations
 
@@ -7,29 +7,29 @@ import logging
 from dataclasses import dataclass
 
 import yfinance as yf
-from anthropic import Anthropic, APIError, APITimeoutError
+from google import genai
 
-from config import ANTHROPIC_API_KEY
+from config import GEMINI_API_KEY
 from constants import (
-    CLAUDE_MODEL,
+    GEMINI_MODEL,
     CLAUDE_MIN_CONFIDENCE,
-    CLAUDE_TIMEOUT_SECONDS,
+    GEMINI_TIMEOUT_SECONDS,
     CLAUDE_EARNINGS_BLACKOUT_DAYS,
 )
 
-log = logging.getLogger("claude_validator")
+log = logging.getLogger("ai_validator")
 
-_client: Anthropic | None = None
+_client = None
 
 
-def _get_client() -> Anthropic | None:
-    """Lazy-init Anthropic client. Returns None if no API key."""
+def _get_client():
+    """Lazy-init Gemini client. Returns None if no API key."""
     global _client
     if _client is not None:
         return _client
-    if not ANTHROPIC_API_KEY:
+    if not GEMINI_API_KEY:
         return None
-    _client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    _client = genai.Client(api_key=GEMINI_API_KEY)
     return _client
 
 
@@ -117,14 +117,12 @@ def _fetch_stock_context(symbol: str) -> dict:
         if cal is not None and isinstance(cal, dict):
             earnings_date = cal.get("Earnings Date")
             if earnings_date:
-                # Can be a list of dates
                 if isinstance(earnings_date, list) and len(earnings_date) > 0:
                     next_date = earnings_date[0]
                 else:
                     next_date = earnings_date
                 ctx["next_earnings_date"] = str(next_date)
 
-                # Calculate days to earnings
                 from datetime import datetime, timezone
                 import pandas as pd
                 if isinstance(next_date, (datetime, pd.Timestamp)):
@@ -197,13 +195,13 @@ def _build_entry_prompt(signal: dict, context: dict) -> str:
 
 def validate_entry(signal: dict) -> ValidationResult:
     """
-    Validate a buy signal using Claude AI.
+    Validate a buy signal using Gemini AI.
 
     Fail-closed: returns approved=False on API/parse errors to avoid risky entries.
     """
     client = _get_client()
     if client is None:
-        log.info("[CLAUDE] No API key — skipping entry validation")
+        log.info("[AI] No Gemini API key — skipping entry validation")
         return ValidationResult(approved=True, confidence=0, reasoning="no_api_key")
 
     symbol = signal.get("stock_code", "")
@@ -212,20 +210,16 @@ def validate_entry(signal: dict) -> ValidationResult:
     context.update(sector_ctx)
 
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=256,
-            timeout=CLAUDE_TIMEOUT_SECONDS,
-            messages=[
-                {
-                    "role": "user",
-                    "content": _build_entry_prompt(signal, context),
-                }
-            ],
-            system=_ENTRY_SYSTEM_PROMPT,
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=_ENTRY_SYSTEM_PROMPT + "\n\n" + _build_entry_prompt(signal, context),
+            config={
+                "max_output_tokens": 256,
+                "response_mime_type": "application/json",
+            },
         )
 
-        text = response.content[0].text.strip()
+        text = response.text.strip()
         parsed = json.loads(text)
 
         approved = bool(parsed.get("approved", False))
@@ -238,7 +232,7 @@ def validate_entry(signal: dict) -> ValidationResult:
             reasoning = f"Low confidence ({confidence}): {reasoning}"
 
         log.info(
-            "[CLAUDE] %s %s (confidence:%d): %s",
+            "[AI] %s %s (confidence:%d): %s",
             symbol,
             "approved" if approved else "rejected",
             confidence,
@@ -250,12 +244,9 @@ def validate_entry(signal: dict) -> ValidationResult:
             reasoning=reasoning,
         )
 
-    except (APIError, APITimeoutError) as e:
-        log.warning("[CLAUDE] API error for %s — fail-closed (rejected): %s", symbol, e)
+    except Exception as e:
+        log.warning("[AI] Error for %s — fail-closed (rejected): %s", symbol, e)
         return ValidationResult(approved=False, confidence=0, reasoning=f"api_error: {e}")
-    except (json.JSONDecodeError, KeyError, IndexError) as e:
-        log.warning("[CLAUDE] Parse error for %s — fail-closed (rejected): %s", symbol, e)
-        return ValidationResult(approved=False, confidence=0, reasoning=f"parse_error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +307,7 @@ def _build_exit_prompt(position: dict, current_price: float) -> str:
 
 def advise_exit(position: dict, current_price: float) -> ExitAdvice:
     """
-    Get Claude's advice on whether to exit a position.
+    Get Gemini's advice on whether to exit a position.
 
     Fail-open: returns should_exit=False on any API error (defer to existing logic).
     """
@@ -327,20 +318,16 @@ def advise_exit(position: dict, current_price: float) -> ExitAdvice:
     symbol = position.get("stock_code", "")
 
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=256,
-            timeout=CLAUDE_TIMEOUT_SECONDS,
-            messages=[
-                {
-                    "role": "user",
-                    "content": _build_exit_prompt(position, current_price),
-                }
-            ],
-            system=_EXIT_SYSTEM_PROMPT,
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=_EXIT_SYSTEM_PROMPT + "\n\n" + _build_exit_prompt(position, current_price),
+            config={
+                "max_output_tokens": 256,
+                "response_mime_type": "application/json",
+            },
         )
 
-        text = response.content[0].text.strip()
+        text = response.text.strip()
         parsed = json.loads(text)
 
         should_exit = bool(parsed.get("should_exit", False))
@@ -350,21 +337,13 @@ def advise_exit(position: dict, current_price: float) -> ExitAdvice:
         if action not in ("hold", "sell_now", "tighten_sl"):
             action = "hold"
 
-        log.info(
-            "[CLAUDE-EXIT] %s: %s (%s)",
-            symbol,
-            action,
-            reasoning,
-        )
+        log.info("[AI-EXIT] %s: %s (%s)", symbol, action, reasoning)
         return ExitAdvice(
             should_exit=should_exit,
             reasoning=reasoning,
             suggested_action=action,
         )
 
-    except (APIError, APITimeoutError) as e:
-        log.warning("[CLAUDE-EXIT] API error for %s — fail-open: %s", symbol, e)
+    except Exception as e:
+        log.warning("[AI-EXIT] Error for %s — fail-open: %s", symbol, e)
         return ExitAdvice(should_exit=False, reasoning=f"api_error: {e}", suggested_action="hold")
-    except (json.JSONDecodeError, KeyError, IndexError) as e:
-        log.warning("[CLAUDE-EXIT] Parse error for %s — fail-open: %s", symbol, e)
-        return ExitAdvice(should_exit=False, reasoning=f"parse_error: {e}", suggested_action="hold")

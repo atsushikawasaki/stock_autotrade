@@ -61,11 +61,11 @@ MAX_POSITIONS = int(os.environ.get("MAX_POSITIONS", "10"))
 MOOMOO_SYMBOL_PREFIX = "US."
 
 # ─── Anthropic (Claude AI) ───────────────────────────────────────────────────
-# Prefer macOS Keychain (service=anthropic_api_key). Falls back to env var.
-# Register via: security add-generic-password -a "$USER" -s "anthropic_api_key" -w
-ANTHROPIC_API_KEY = (
-    _read_keychain_secret("anthropic_api_key")
-    or os.environ.get("ANTHROPIC_API_KEY", "")
+# Prefer macOS Keychain (service=gemini_api_key). Falls back to env var.
+# Register via: security add-generic-password -a "$USER" -s "gemini_api_key" -w
+GEMINI_API_KEY = (
+    _read_keychain_secret("gemini_api_key")
+    or os.environ.get("GEMINI_API_KEY", "")
 )
 
 # ─── Polling ──────────────────────────────────────────────────────────────────

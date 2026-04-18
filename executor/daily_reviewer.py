@@ -1,4 +1,4 @@
-"""Daily trade review: generates end-of-day analysis via Claude AI."""
+"""Daily trade review: generates end-of-day analysis via Gemini AI."""
 
 from __future__ import annotations
 
@@ -6,11 +6,10 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from anthropic import APIError, APITimeoutError
 from supabase import create_client
 
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
-from constants import CLAUDE_MODEL, CLAUDE_TIMEOUT_SECONDS
+from constants import GEMINI_MODEL, GEMINI_TIMEOUT_SECONDS
 from market_filter import get_market_regime
 from claude_validator import _get_client
 
@@ -110,7 +109,7 @@ def _collect_daily_data(date_str: str) -> dict:
 
 def generate_daily_review() -> str | None:
     """
-    Generate a daily trade review using Claude AI.
+    Generate a daily trade review using Gemini AI.
 
     Returns the review text (markdown), or None on failure.
     Saves the review to us_daily_reviews table.
@@ -129,20 +128,15 @@ def generate_daily_review() -> str | None:
         return None
 
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=512,
-            timeout=CLAUDE_TIMEOUT_SECONDS,
-            messages=[
-                {
-                    "role": "user",
-                    "content": json.dumps(data, default=str, ensure_ascii=False),
-                }
-            ],
-            system=_REVIEW_SYSTEM_PROMPT,
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=_REVIEW_SYSTEM_PROMPT + "\n\n" + json.dumps(data, default=str, ensure_ascii=False),
+            config={
+                "max_output_tokens": 512,
+            },
         )
 
-        review_text = response.content[0].text.strip()
+        review_text = response.text.strip()
 
         # Save to Supabase
         sb.table("us_daily_reviews").upsert(
@@ -158,9 +152,6 @@ def generate_daily_review() -> str | None:
         log.info("[REVIEW] Daily review generated and saved")
         return review_text
 
-    except (APIError, APITimeoutError) as e:
-        log.warning("[REVIEW] API error: %s", e)
-        return None
     except Exception as e:
         log.warning("[REVIEW] Failed to generate review: %s", e)
         return None
