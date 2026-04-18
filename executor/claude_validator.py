@@ -29,7 +29,10 @@ def _get_client():
         return _client
     if not GEMINI_API_KEY:
         return None
-    _client = genai.Client(api_key=GEMINI_API_KEY)
+    _client = genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options={"timeout": GEMINI_TIMEOUT_SECONDS * 1000},
+    )
     return _client
 
 
